@@ -1,0 +1,525 @@
+import { fits, GARBAGE_FALL_MS } from '/shared/engine.js';
+const $ = (id) => document.getElementById(id);
+const views = ['home', 'game', 'history', 'guide'];
+const colors = [
+  '#000000',
+  '#a2eff8',
+  '#ffe2a3',
+  '#d1c4ff',
+  '#ffc0d4',
+  '#bcf0d3',
+  '#b7d5ff',
+  '#ffd0ab',
+  '#d5dfed'
+];
+let user = null,
+  socket = null,
+  connecting = null,
+  active = null;
+let queued = false,
+  history = [],
+  pendingIntent = null,
+  resultId = null;
+let toastTimer, countdownTimer;
+const held = new Map();
+
+function toast(message) {
+  $('toast').textContent = message;
+  $('toast').hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    $('toast').hidden = true;
+  }, 6000);
+}
+function showView(name) {
+  for (const view of views) $(view + '-view').hidden = view !== name;
+  window.scrollTo({ top: 0, behavior: 'instant' });
+}
+function navigate(name) {
+  if (active && name !== 'game') {
+    $('confirm-dialog').showModal();
+    return;
+  }
+  if (queued) return;
+  if (name === 'history') loadHistory();
+  else showView(name);
+}
+window.addEventListener('hashchange', () => {
+  const route = location.hash.slice(1);
+  navigate(views.includes(route) ? route : 'home');
+});
+document.querySelectorAll('.back-home').forEach((button) =>
+  button.addEventListener('click', () => {
+    location.hash = 'home';
+    showView('home');
+  })
+);
+async function api(path, data) {
+  const response = await fetch('/api/' + path, {
+    ...(data
+      ? {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data)
+        }
+      : {})
+  });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || '通信に失敗しました。');
+  return result;
+}
+function updateAccount() {
+  $('player-label').textContent = user ? user.nickname : 'GUEST PLAYER';
+  $('account-button').textContent = user ? '名前を変更' : '名前を登録';
+}
+function openAuth() {
+  $('auth-error').textContent = '';
+  $('auth-dialog').showModal();
+}
+$('account-button').addEventListener('click', async () => {
+  if (active || queued) {
+    toast('対戦・待機を終了してから名前を変更してください。');
+    return;
+  }
+  $('auth-form').elements.nickname.value = user?.nickname || '';
+  openAuth();
+});
+$('auth-close').addEventListener('click', () => {
+  pendingIntent = null;
+  $('auth-dialog').close();
+});
+$('auth-dialog').addEventListener('cancel', () => {
+  pendingIntent = null;
+});
+$('auth-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  $('auth-submit').disabled = true;
+  $('auth-error').textContent = '';
+  try {
+    const data = Object.fromEntries(new FormData(event.currentTarget));
+    user = (await api('register', data)).user;
+    $('auth-dialog').close();
+    $('auth-form').reset();
+    updateAccount();
+    const intent = pendingIntent;
+    pendingIntent = null;
+    if (intent === 'history') await loadHistory();
+    else if (intent) await startBattle(intent);
+  } catch (error) {
+    $('auth-error').textContent = error.message;
+  } finally {
+    $('auth-submit').disabled = false;
+  }
+});
+function send(message) {
+  if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
+}
+async function connect() {
+  if (socket?.readyState === WebSocket.OPEN) return;
+  if (connecting) return connecting;
+  connecting = new Promise((resolve, reject) => {
+    const ws = new WebSocket(
+      `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws`
+    );
+    socket = ws;
+    const timer = setTimeout(() => {
+      ws.close();
+      reject(new Error('接続がタイムアウトしました。'));
+    }, 10000);
+    let ready = false;
+    ws.addEventListener('message', (event) => {
+      const message = JSON.parse(event.data);
+      if (message.type === 'ready') {
+        ready = true;
+        clearTimeout(timer);
+        resolve();
+      } else handleMessage(message);
+    });
+    ws.addEventListener('close', () => {
+      clearTimeout(timer);
+      if (socket === ws) socket = null;
+      if (!ready)
+        reject(
+          new Error('接続できません。同じブラウザーの別タブを閉じて、もう一度お試しください。')
+        );
+      if (active || queued) {
+        clearInterval(countdownTimer);
+        $('countdown').textContent = '';
+        clearHeld();
+        active = null;
+        queued = false;
+        $('queue-dialog').close();
+        $('confirm-dialog').close();
+        showView('home');
+        toast('接続が切れました。試合中の場合は切断による敗北となります。履歴を確認してください。');
+      }
+    });
+    ws.addEventListener('error', () => {
+      /* close reports the actionable error */
+    });
+  }).finally(() => {
+    connecting = null;
+  });
+  return connecting;
+}
+async function startBattle(mode) {
+  if (!user) {
+    pendingIntent = mode;
+    openAuth();
+    return;
+  }
+  if (active || queued) return;
+  $('cpu-button').disabled = $('online-button').disabled = true;
+  try {
+    await connect();
+    send({
+      type: 'join',
+      mode,
+      difficulty: document.querySelector('[name=difficulty]:checked').value
+    });
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    $('cpu-button').disabled = $('online-button').disabled = false;
+  }
+}
+$('online-button').addEventListener('click', () => startBattle('online'));
+$('cpu-button').addEventListener('click', () => startBattle('cpu'));
+$('queue-cancel').addEventListener('click', () => send({ type: 'cancel' }));
+$('queue-cpu').addEventListener('click', () => {
+  send({ type: 'cancel' });
+  send({
+    type: 'join',
+    mode: 'cpu',
+    difficulty: document.querySelector('[name=difficulty]:checked').value
+  });
+});
+$('queue-dialog').addEventListener('cancel', (event) => {
+  event.preventDefault();
+  send({ type: 'cancel' });
+});
+function handleMessage(message) {
+  if (message.type === 'queued') {
+    queued = true;
+    if (!$('queue-dialog').open) $('queue-dialog').showModal();
+  } else if (message.type === 'canceled') {
+    queued = false;
+    $('queue-dialog').close();
+  } else if (message.type === 'start') {
+    active = message;
+    queued = false;
+    $('queue-dialog').close();
+    $('result-dialog').close();
+    $('confirm-dialog').close();
+    showView('game');
+    $('self-name').textContent = message.players[message.seat].nickname;
+    $('rival-name').textContent = message.players[1 - message.seat].nickname;
+    $('battle-title').textContent = message.difficulty
+      ? 'CPU CHALLENGE / ' + message.difficulty.toUpperCase()
+      : 'ONLINE COLOR BATTLE';
+    clearInterval(countdownTimer);
+    const startsAt = performance.now() + message.startsAt - message.serverNow;
+    const countdown = () => {
+      const remaining = Math.ceil((startsAt - performance.now()) / 1000);
+      $('countdown').textContent = remaining > 0 ? remaining : '';
+      if (remaining <= 0) clearInterval(countdownTimer);
+    };
+    countdown();
+    countdownTimer = setInterval(countdown, 100);
+  } else if (message.type === 'state' && active) {
+    renderPlayer('self', message.states[active.seat]);
+    renderPlayer('rival', message.states[1 - active.seat]);
+    const seconds = Math.floor(message.elapsed / 1000);
+    $('timer').textContent =
+      `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+  } else if (message.type === 'result' && active) {
+    const seat = active.seat;
+    resultId = message.id;
+    active = null;
+    clearHeld();
+    clearInterval(countdownTimer);
+    $('countdown').textContent = '';
+    $('confirm-dialog').close();
+    const draw = message.winner === null;
+    $('result-title').textContent = draw
+      ? 'DRAW'
+      : message.winner === seat
+        ? 'YOU WIN!'
+        : 'NEXT CHALLENGE!';
+    const reasons = {
+      disconnect: '接続切れ',
+      forfeit: '途中終了',
+      topout: 'ブロックが上まで到達',
+      time: '10分経過',
+      server_shutdown: 'サーバー再起動'
+    };
+    $('result-detail').textContent =
+      `${reasons[message.reason]} / あなた ${message.scores[seat].toLocaleString()} : 相手 ${message.scores[1 - seat].toLocaleString()}`;
+    $('save-status').textContent = '対戦ログを保存しています…';
+    $('result-dialog').showModal();
+  } else if (message.type === 'saved' && message.id === resultId) {
+    $('save-status').textContent = '対戦ログを保存しました。';
+    if (!$('history-view').hidden) loadHistory();
+  } else if (message.type === 'error') {
+    toast(message.message);
+    if ($('result-dialog').open) $('save-status').textContent = message.message;
+  }
+}
+function drawCell(ctx, x, y, size, value, ghost = false) {
+  ctx.fillStyle = colors[value];
+  if (ghost) {
+    ctx.globalAlpha = 0.27;
+    ctx.strokeStyle = colors[value];
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(x + 2, y + 2, size - 4, size - 4);
+    ctx.globalAlpha = 1;
+    return;
+  }
+  const glass = ctx.createLinearGradient(x, y, x + size, y + size);
+  glass.addColorStop(0, colors[value] + 'c4');
+  glass.addColorStop(1, colors[value] + '66');
+  ctx.fillStyle = glass;
+  ctx.fillRect(x + 1, y + 1, size - 2, size - 2);
+  ctx.strokeStyle = colors[value] + 'e0';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x + 1.5, y + 1.5, size - 3, size - 3);
+  ctx.fillStyle = '#ffffff30';
+  ctx.fillRect(x + 3, y + 3, size - 6, 3);
+  ctx.fillStyle = '#ffffff14';
+  ctx.fillRect(x + 3, y + size - 6, size - 6, 3);
+  if (value !== 8) {
+    ctx.fillStyle = '#ffffffb0';
+    ctx.font = `${size * 0.32}px monospace`;
+    ctx.textAlign = 'center';
+    ctx.fillText(['', '●', '◆', '＋', '■', '◊', '○', '△'][value], x + size / 2, y + size * 0.65);
+  }
+}
+const playerStates = new Map();
+function renderPlayer(prefix, state) {
+  playerStates.set(prefix, { state, receivedAt: performance.now() });
+  paintBoard(prefix, state);
+  updateStats(prefix, state);
+}
+function paintBoard(prefix, state, extraMs = 0) {
+  const canvas = $(prefix + '-board'),
+    ctx = canvas.getContext('2d'),
+    size = canvas.width / 10;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.strokeStyle = '#1b2a3a66';
+  ctx.lineWidth = 0.5;
+  for (let x = 0; x <= 10; x++) {
+    ctx.beginPath();
+    ctx.moveTo(x * size, 0);
+    ctx.lineTo(x * size, canvas.height);
+    ctx.stroke();
+  }
+  for (let y = 0; y <= 20; y++) {
+    ctx.beginPath();
+    ctx.moveTo(0, y * size);
+    ctx.lineTo(canvas.width, y * size);
+    ctx.stroke();
+  }
+  state.board.forEach((row, y) =>
+    row.forEach((cell, x) => {
+      if (cell) drawCell(ctx, x * size, y * size, size, cell);
+    })
+  );
+  let ghostY = state.y;
+  while (state.matrix.length && fits(state.board, state.matrix, state.x, ghostY + 1)) ghostY++;
+  state.matrix.forEach((row, dy) =>
+    row.forEach((cell, dx) => {
+      if (cell) {
+        drawCell(ctx, (state.x + dx) * size, (ghostY + dy) * size, size, cell, true);
+        drawCell(ctx, (state.x + dx) * size, (state.y + dy) * size, size, cell);
+      }
+    })
+  );
+  if (state.fallingGarbage) {
+    const block = state.fallingGarbage;
+    const t = Math.min(1, (block.elapsed + extraMs) / GARBAGE_FALL_MS);
+    const y = -1 + (block.targetY + 1) * t * t;
+    drawCell(ctx, block.x * size, y * size, size, 8);
+  }
+}
+function updateStats(prefix, state) {
+  const nextCtx = $(prefix + '-next').getContext('2d');
+  nextCtx.clearRect(0, 0, 108, 216);
+  state.next.forEach((matrix, i) =>
+    matrix.forEach((row, y) =>
+      row.forEach((cell, x) => {
+        if (cell)
+          drawCell(
+            nextCtx,
+            (108 - matrix[0].length * 22) / 2 + x * 22,
+            i * 69 + y * 22 + 10,
+            22,
+            cell
+          );
+      })
+    )
+  );
+  $(prefix + '-score').textContent = state.score.toLocaleString();
+  $(prefix + '-lines').textContent = state.lines;
+  $(prefix + '-pending').textContent = state.pending;
+  $(prefix + '-combo').textContent = state.canceled
+    ? `相殺！ お邪魔 ${state.canceled} 個を打ち消した`
+    : state.garbageActive
+      ? 'お邪魔が1個ずつ落下中…'
+      : state.combo >= 1
+        ? `${state.combo} COMBO · ${state.lastClear} BLOCKS CLEARED`
+        : state.lastClear
+          ? `${state.lastClear} BLOCKS CLEARED!`
+          : state.pending
+            ? `お邪魔 ${state.pending} 個が接近中`
+            : '同じ色を4つつなげよう';
+  if (prefix === 'self') {
+    $('shield-button').disabled = !state.shield;
+    $('shield-button').textContent = state.shieldMs
+      ? `SHIELD ${Math.ceil(state.shieldMs / 1000)}s`
+      : state.shield
+        ? 'F9 SHIELD [F]'
+        : 'SHIELD USED';
+  }
+}
+function animateBoards(now) {
+  if (active) {
+    for (const [prefix, { state, receivedAt }] of playerStates) {
+      if (state.fallingGarbage) paintBoard(prefix, state, now - receivedAt);
+    }
+  }
+  requestAnimationFrame(animateBoards);
+}
+requestAnimationFrame(animateBoards);
+const keyActions = {
+  ArrowLeft: 'left',
+  ArrowRight: 'right',
+  ArrowUp: 'rotate',
+  ArrowDown: 'down',
+  Space: 'drop',
+  KeyF: 'shield'
+};
+function action(action) {
+  if (active) send({ type: 'action', action });
+}
+function clearHeld() {
+  held.clear();
+}
+document.addEventListener('keydown', (event) => {
+  if (!active || document.querySelector('dialog[open]') || event.target.matches('input,textarea'))
+    return;
+  const command = keyActions[event.code];
+  if (!command) return;
+  event.preventDefault();
+  if (event.repeat || held.has(event.code)) return;
+  action(command);
+  if (['left', 'right', 'down'].includes(command))
+    held.set(event.code, { command, next: performance.now() + 160 });
+});
+document.addEventListener('keyup', (event) => held.delete(event.code));
+window.addEventListener('blur', clearHeld);
+document.addEventListener('visibilitychange', clearHeld);
+setInterval(() => {
+  for (const value of held.values())
+    if (performance.now() >= value.next) {
+      action(value.command);
+      value.next = performance.now() + 80;
+    }
+}, 20);
+document.querySelectorAll('[data-action]').forEach((button) => {
+  button.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    button.setPointerCapture(event.pointerId);
+    const command = button.dataset.action;
+    action(command);
+    if (['left', 'right', 'down'].includes(command))
+      held.set('touch', { command, next: performance.now() + 160 });
+  });
+  for (const event of ['pointerup', 'pointercancel', 'lostpointercapture'])
+    button.addEventListener(event, () => held.delete('touch'));
+});
+$('shield-button').addEventListener('click', () => action('shield'));
+$('forfeit-button').addEventListener('click', () => {
+  clearHeld();
+  $('confirm-dialog').showModal();
+});
+$('confirm-cancel').addEventListener('click', () => $('confirm-dialog').close());
+$('confirm-forfeit').addEventListener('click', () => {
+  action('forfeit');
+  $('confirm-dialog').close();
+});
+$('result-home').addEventListener('click', () => {
+  $('result-dialog').close();
+  showView('home');
+});
+$('result-history').addEventListener('click', () => {
+  $('result-dialog').close();
+  loadHistory();
+});
+$('result-dialog').addEventListener('cancel', () => showView('home'));
+$('history-nav').addEventListener('click', () => navigate('history'));
+async function loadHistory() {
+  if (!user) {
+    pendingIntent = 'history';
+    openAuth();
+    return;
+  }
+  showView('history');
+  $('history-list').textContent = '読み込み中…';
+  $('export-button').disabled = true;
+  try {
+    history = (await api('history')).matches;
+    $('history-list').replaceChildren();
+    if (!history.length) {
+      const p = document.createElement('p');
+      p.className = 'history-empty';
+      p.textContent = 'まだ対戦履歴がありません。最初のバトルに挑戦しよう。';
+      $('history-list').append(p);
+    }
+    for (const match of history) {
+      const seat = match.players.findIndex((player) => player.username === user.username),
+        row = document.createElement('article');
+      row.className = 'history-row';
+      const result = document.createElement('strong');
+      result.textContent = match.winner === null ? 'DRAW' : match.winner === seat ? 'WIN' : 'LOSE';
+      const details = document.createElement('div');
+      details.textContent = 'vs ' + match.players[1 - seat].nickname;
+      const date = document.createElement('small');
+      date.textContent =
+        new Date(match.startedAt).toLocaleString('ja-JP') +
+        ' / ' +
+        (match.difficulty ? 'CPU ' + match.difficulty : 'オンライン');
+      details.append(date);
+      const score = document.createElement('b');
+      score.textContent = match.scores[seat].toLocaleString();
+      row.append(result, details, score);
+      $('history-list').append(row);
+    }
+    $('export-button').disabled = !history.length;
+  } catch (error) {
+    $('history-list').textContent = error.message;
+  }
+}
+$('export-button').addEventListener('click', () => {
+  const url = URL.createObjectURL(
+    new Blob([JSON.stringify(history, null, 2)], { type: 'application/json' })
+  );
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'dict-f9-battle-log.json';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+});
+window.addEventListener('beforeunload', (event) => {
+  if (active) {
+    event.preventDefault();
+    event.returnValue = '';
+  }
+});
+try {
+  user = (await api('me')).user;
+  updateAccount();
+} catch {
+  toast('サーバーに接続できません。ページを再読み込みしてください。');
+}
+const initial = location.hash.slice(1);
+if (['guide', 'history'].includes(initial)) navigate(initial);

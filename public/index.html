@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0b1421" />
+    <meta
+      name="description"
+      content="DAIKIN DICT F9 テトリス。同じ色を4個つなげて、オンライン対戦とCPUバトルを楽しもう。"
+    />
+    <title>DAIKIN DICT F9 テトリス</title>
+    <link rel="icon" href="/assets/mascot.webp" />
+    <link rel="stylesheet" href="/styles.css" />
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <header class="site-header">
+      <a href="#home" class="brand" aria-label="ホーム"
+        ><span class="brand-icon">F9</span
+        ><span>DAIKIN <b>DICT F9</b><small>テトリス / COLOR BATTLE</small></span></a
+      >
+      <nav aria-label="メインメニュー">
+        <a href="#home">ホーム</a><a href="#guide">遊び方</a
+        ><button id="history-nav" class="text-button">対戦履歴</button>
+      </nav>
+      <div class="account">
+        <span class="online-dot"></span><span id="player-label">GUEST PLAYER</span
+        ><button id="account-button" class="small-button">名前を登録</button>
+      </div>
+    </header>
+    <main>
+      <section id="home-view" class="view">
+        <div class="hero">
+          <div class="hero-copy">
+            <div class="eyebrow"><span></span> CONNECT. STACK. CHAIN.</div>
+            <h1>つなげる色。<br />つながる<span>バトル。</span></h1>
+            <p>
+              4つの色が、勝負を変える。<br />同じ色を4個つなげて消す、連鎖型テトリス。<br />離れた仲間とも、腕利きのCPUとも。
+            </p>
+            <div class="hero-tags">
+              <span>オンライン対戦</span><span>4色の連鎖</span><span>CPU 3 LEVELS</span>
+            </div>
+          </div>
+          <div class="hero-art">
+            <div class="art-grid"></div>
+            <span class="floating-tile tile-one"></span><span class="floating-tile tile-two"></span
+            ><span class="floating-tile tile-three"></span>
+            <div class="mascot-disc">
+              <img
+                src="/assets/mascot.webp"
+                alt="青いキャラクターがバトルを応援"
+                fetchpriority="high"
+              />
+            </div>
+            <div class="art-caption">
+              <span class="online-dot"></span> READY FOR YOUR NEXT CHAIN?
+            </div>
+          </div>
+        </div>
+        <div class="section-heading">
+          <div>
+            <span class="eyebrow muted">SELECT YOUR BATTLE</span>
+            <h2>今日は、誰と戦う？</h2>
+          </div>
+          <span class="subtle">1対1 / 1ゲーム最大10分</span>
+        </div>
+        <div class="mode-grid">
+          <article class="mode-card online-card">
+            <span class="card-number">01 / MULTIPLAYER</span>
+            <div class="mode-symbol">↗</div>
+            <h3>オンラインバトル</h3>
+            <p>同じURLに集まって、リアルタイム対戦。<br />連鎖でお邪魔ブロックを送り込もう。</p>
+            <button id="online-button" class="primary-button">対戦相手を探す <span>→</span></button
+            ><small>登録しているプレーヤー同士でマッチング</small>
+          </article>
+          <article class="mode-card cpu-card">
+            <span class="card-number">02 / SINGLE PLAYER</span>
+            <div class="mode-symbol">⌘</div>
+            <h3>CPUチャレンジ</h3>
+            <p>いつでも、自分に合った強さで。<br />初めての練習から、本気の一戦まで。</p>
+            <fieldset class="difficulty">
+              <legend class="sr-only">CPUの難易度</legend>
+              <label
+                ><input type="radio" name="difficulty" value="easy" /><span
+                  >EASY<small>はじめて</small></span
+                ></label
+              ><label
+                ><input type="radio" name="difficulty" value="normal" checked /><span
+                  >NORMAL<small>ほどよく</small></span
+                ></label
+              ><label
+                ><input type="radio" name="difficulty" value="hard" /><span
+                  >HARD<small>本気で</small></span
+                ></label
+              >
+            </fieldset>
+            <button id="cpu-button" class="secondary-button">CPUと対戦する <span>→</span></button>
+          </article>
+        </div>
+        <div class="feature-strip">
+          <div>
+            <span>01</span>
+            <p><b>CHAIN COMBO</b><small>連続消去と連鎖で、攻撃力アップ。</small></p>
+          </div>
+          <div>
+            <span>02</span>
+            <p><b>F9 SHIELD</b><small>1試合に一度。5秒間のシールドで逆転。</small></p>
+          </div>
+          <a href="#guide">ルールをチェック <span>↗</span></a>
+        </div>
+      </section>
+
+      <section id="game-view" class="view" hidden>
+        <div class="battle-top">
+          <div>
+            <span class="eyebrow">LIVE BATTLE</span>
+            <h1 id="battle-title">COLOR BATTLE</h1>
+          </div>
+          <div class="battle-clock">
+            <span id="connection-label">● CONNECTED</span><b id="timer">00:00</b>
+          </div>
+          <button id="forfeit-button" class="small-button">対戦を終了</button>
+        </div>
+        <div id="countdown" class="countdown" aria-live="polite"></div>
+        <div class="arena">
+          <article class="player-panel self">
+            <div class="player-heading">
+              <span class="player-badge">YOU</span>
+              <h2 id="self-name">PLAYER</h2>
+              <span id="self-score">0</span>
+            </div>
+            <div class="board-and-side">
+              <canvas
+                id="self-board"
+                width="360"
+                height="720"
+                aria-label="自分のゲーム盤面"
+              ></canvas>
+              <aside class="board-sidebar">
+                <span class="stat-label">NEXT</span
+                ><canvas id="self-next" width="108" height="216" aria-label="次のブロック"></canvas>
+                <div class="stat"><span>CLEARED</span><b id="self-lines">0</b></div>
+                <div class="stat"><span>INCOMING</span><b id="self-pending">0</b></div>
+                <button id="shield-button" class="shield-button">
+                  F9 SHIELD<small>Fキーで発動</small>
+                </button>
+              </aside>
+            </div>
+            <div id="self-combo" class="combo-label">4つの色をつなげよう</div>
+          </article>
+          <div class="versus">
+            <span>VS</span><img src="/assets/mascot.webp" alt="応援キャラクター" /><small
+              >MAKE<br />YOUR<br />CHAIN.</small
+            >
+          </div>
+          <article class="player-panel opponent">
+            <div class="player-heading">
+              <span class="player-badge">RIVAL</span>
+              <h2 id="rival-name">OPPONENT</h2>
+              <span id="rival-score">0</span>
+            </div>
+            <div class="board-and-side">
+              <canvas
+                id="rival-board"
+                width="360"
+                height="720"
+                aria-label="相手のゲーム盤面"
+              ></canvas>
+              <aside class="board-sidebar">
+                <span class="stat-label">NEXT</span
+                ><canvas
+                  id="rival-next"
+                  width="108"
+                  height="216"
+                  aria-label="相手の次のブロック"
+                ></canvas>
+                <div class="stat"><span>CLEARED</span><b id="rival-lines">0</b></div>
+                <div class="stat"><span>INCOMING</span><b id="rival-pending">0</b></div>
+                <div class="rival-status">ONLINE<br />OPPONENT</div>
+              </aside>
+            </div>
+            <div id="rival-combo" class="combo-label">相手の盤面をチェック</div>
+          </article>
+        </div>
+        <div class="game-controls">
+          <span><kbd>←</kbd><kbd>→</kbd> 移動</span><span><kbd>↑</kbd> 回転</span
+          ><span><kbd>↓</kbd> 高速落下</span><span><kbd>Space</kbd> 一気に落下</span
+          ><span><kbd>F</kbd> シールド</span>
+        </div>
+        <div class="touch-controls" aria-label="タッチ操作">
+          <button data-action="left" aria-label="左に移動">←</button
+          ><button data-action="rotate" aria-label="回転">↻</button
+          ><button data-action="right" aria-label="右に移動">→</button
+          ><button data-action="down" aria-label="下に移動">↓</button
+          ><button data-action="drop">DROP</button>
+        </div>
+      </section>
+
+      <section id="history-view" class="view" hidden>
+        <div class="section-heading">
+          <div>
+            <span class="eyebrow">YOUR BATTLE LOG</span>
+            <h1>対戦履歴</h1>
+          </div>
+          <button class="small-button back-home">ホームへ戻る</button>
+        </div>
+        <p class="subtle">直近20試合。ログはサーバーに保存されます。</p>
+        <div id="history-list"></div>
+        <button id="export-button" class="secondary-button">履歴をJSONでダウンロード</button>
+      </section>
+
+      <section id="guide-view" class="view" hidden>
+        <span class="eyebrow">HOW TO PLAY</span>
+        <h1>4つつなげて、連鎖をつくろう。</h1>
+        <div class="guide-grid">
+          <article>
+            <h2>01 / 基本ルール</h2>
+            <p>
+              4個組のブロックを落とし、同じ色を上下左右に4個以上つなげると消えます。斜めのつながりは数えません。消えた後に上のブロックが落ち、さらに4個つながると連鎖します。
+            </p>
+            <p>
+              盤面は横10×縦20。次のブロックを置けなくなったら負けです。10分経過時はスコアで勝敗を決めます。
+            </p>
+          </article>
+          <article>
+            <h2>02 / お邪魔と追加機能</h2>
+            <p>
+              消去数÷4の整数部分 ＋ 連鎖数−1 ＋
+              コンボのボーナスがお邪魔の個数になります。消去による攻撃は、まず自分に届く予定のお邪魔と相殺し、余った分だけ相手へ送ります。灰色のお邪魔は隣の色を消すと消去できます。
+            </p>
+            <p>
+              連続で消すとコンボが加算され、2コンボごとに攻撃が1個増えます。Fキーのシールドは1試合に一度。待機中のお邪魔を最大4個消し、5秒間、攻撃1回ごとに最大4個を防ぎます。
+            </p>
+            <p>
+              予告から1.2秒以上たった後、消去しなかった着地でお邪魔が降り始めます。1回最大6個を、1個ずつ約0.7秒間隔で落とします。落下中は次のブロックを待ちます。
+            </p>
+          </article>
+          <article>
+            <h2>03 / キーボード</h2>
+            <dl>
+              <dt>← / →</dt>
+              <dd>左右に移動</dd>
+              <dt>↑</dt>
+              <dd>時計回りに回転</dd>
+              <dt>↓</dt>
+              <dd>1マス下へ（長押し可）</dd>
+              <dt>Space</dt>
+              <dd>一番下へ即座に固定</dd>
+              <dt>F</dt>
+              <dd>シールドを発動</dd>
+            </dl>
+          </article>
+          <article>
+            <h2>04 / 対戦をはじめる</h2>
+            <p>
+              名前だけを登録します。同じブラウザーでは次回も名前と履歴を使えます。オンラインでは待機中のプレーヤーと自動で対戦。相手がいないときはCPU戦に切り替えられます。
+            </p>
+            <p>
+              CPUは EASY / NORMAL / HARD
+              の3段階。接続切れや途中終了は敗北扱いです。再接続による試合復帰には対応していません。
+            </p>
+          </article>
+        </div>
+        <button class="primary-button back-home">ホームに戻って対戦する →</button>
+      </section>
+    </main>
+    <footer>
+      <span>DAIKIN DICT F9 テトリス · 製作者：ちゅん丸</span
+      ><span>FOUR COLORS. ENDLESS POSSIBILITIES.</span><a href="#guide">操作説明 ↗</a>
+    </footer>
+    <dialog id="auth-dialog">
+      <button class="dialog-close" id="auth-close" aria-label="閉じる">×</button
+      ><span class="eyebrow">PLAYER ENTRY</span>
+      <h2 id="auth-title">プレーヤー登録</h2>
+      <p class="subtle">あなたの名前で、バトルをはじめよう。</p>
+      <form id="auth-form">
+        <label id="nickname-field"
+          >名前<input
+            name="nickname"
+            maxlength="16"
+            required
+            autocomplete="nickname"
+            placeholder="対戦中に表示する名前"
+        /></label>
+        <p class="subtle">
+          ID・パスワードは不要です。このブラウザーに名前と履歴を記憶します。Cookieを削除したり、別の端末を使うと引き継げません。
+        </p>
+        <p id="auth-error" class="form-error" role="alert"></p>
+        <button class="primary-button" id="auth-submit" type="submit">登録してはじめる →</button>
+      </form>
+    </dialog>
+    <dialog id="queue-dialog">
+      <span class="search-orbit"></span><span class="eyebrow">MATCHMAKING</span>
+      <h2>対戦相手を探しています</h2>
+      <p class="subtle">別のプレーヤーが「対戦相手を探す」を<br />押すと対戦が始まります。</p>
+      <button id="queue-cpu" class="primary-button">CPU戦に切り替える →</button
+      ><button id="queue-cancel" class="text-button">待機を取り消す</button>
+    </dialog>
+    <dialog id="result-dialog">
+      <span class="eyebrow">BATTLE RESULT</span>
+      <h2 id="result-title">YOU WIN!</h2>
+      <p id="result-detail"></p>
+      <p id="save-status" class="subtle" aria-live="polite">対戦ログを保存しています…</p>
+      <button id="result-home" class="primary-button">ホームへ戻る →</button
+      ><button id="result-history" class="text-button">対戦履歴を見る</button>
+    </dialog>
+    <dialog id="confirm-dialog">
+      <h2>対戦を終了しますか？</h2>
+      <p class="subtle">途中終了は敗北として記録されます。</p>
+      <button id="confirm-forfeit" class="primary-button">対戦を終了する</button
+      ><button id="confirm-cancel" class="text-button">対戦に戻る</button>
+    </dialog>
+    <div id="toast" role="status" aria-live="polite" hidden></div>
+  </body>
+</html>

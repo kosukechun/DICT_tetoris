@@ -1,0 +1,45 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Console upload step 3 - HTTPS and WebSocket public URL
+Parameters:
+  BeanstalkDomain:
+    Type: String
+    Description: Environment domain only, without http:// or a trailing slash
+    AllowedPattern: '[a-zA-Z0-9.-]+\.elasticbeanstalk\.com'
+  OriginSecret:
+    Type: String
+    NoEcho: true
+    MinLength: 32
+    MaxLength: 128
+    AllowedPattern: '[a-zA-Z0-9_-]+'
+    Description: Same 32-128 character secret as ORIGIN_SECRET in Beanstalk
+Resources:
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        HttpVersion: http2
+        IPV6Enabled: true
+        PriceClass: PriceClass_200
+        Origins:
+          - Id: game
+            DomainName: !Ref BeanstalkDomain
+            OriginCustomHeaders:
+              - HeaderName: X-Origin-Verify
+                HeaderValue: !Ref OriginSecret
+            CustomOriginConfig:
+              HTTPPort: 80
+              OriginProtocolPolicy: http-only
+        DefaultCacheBehavior:
+          TargetOriginId: game
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD, OPTIONS, PUT, PATCH, POST, DELETE]
+          CachedMethods: [GET, HEAD]
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+          OriginRequestPolicyId: 216adef6-5c7f-47e4-b989-5492eafa07d3
+          Compress: true
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+Outputs:
+  GameUrl:
+    Value: !Sub https://${Distribution.DomainName}

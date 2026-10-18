@@ -1,0 +1,11 @@
+node_modules/
+.npm-cache/
+data/
+.env
+test-results/
+playwright-report/
+*.log
+infra/parameters.local.json
+.venv/
+__pycache__/
+.pytest_cache/

@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="460" viewBox="0 0 1080 460">
+  <rect width="1080" height="460" rx="18" fill="#101d30"/>
+  <g font-family="sans-serif" fill="#eef5ff">
+    <text x="38" y="48" font-size="25" font-weight="bold">AWSコンソールでアップロードする3つのファイル</text>
+    <text x="38" y="78" font-size="15" fill="#b6cadc">説明図です。実際のAWS画面ではありません。操作はブラウザー内で完結します。</text>
+    <g stroke="#536b87" fill="#1c3048">
+      <rect x="30" y="110" width="320" height="245" rx="12"/>
+      <rect x="380" y="110" width="320" height="245" rx="12"/>
+      <rect x="730" y="110" width="320" height="245" rx="12"/>
+    </g>
+    <g font-size="20" font-weight="bold" fill="#a2eff8">
+      <text x="50" y="147">1  保存先などを用意</text>
+      <text x="400" y="147">2  ゲームを起動</text>
+      <text x="750" y="147">3  公開URLを発行</text>
+    </g>
+    <g font-size="17">
+      <text x="50" y="187">CloudFormation</text>
+      <text x="50" y="222">infra/cloudformation.yaml</text>
+      <text x="50" y="270">データベース・権限・</text>
+      <text x="50" y="296">ネットワークを作成</text>
+      <text x="400" y="187">Elastic Beanstalk / Node.js</text>
+      <text x="400" y="222">release/dict-tetoris.zip</text>
+      <text x="400" y="270">ZIPは展開せずアップロード</text>
+      <text x="400" y="296">設定値はREADMEの表を参照</text>
+      <text x="750" y="187">CloudFormation</text>
+      <text x="750" y="222">infra/cloudfront.yaml</text>
+      <text x="750" y="270">出力の GameUrl を開く</text>
+      <text x="750" y="296">https://…cloudfront.net</text>
+    </g>
+    <path d="M354 228h20m-8-8 8 8-8 8M704 228h20m-8-8 8 8-8 8" stroke="#a2eff8" fill="none" stroke-width="3"/>
+    <text x="38" y="399" font-size="18">公開完了の確認：名前登録 → CPU対戦 → 2人でオンライン対戦 → 履歴の保存</text>
+    <text x="38" y="432" font-size="15" fill="#b6cadc">今回はAWSへのデプロイは未実施です。作成すると利用料が発生する場合があります。</text>
+  </g>
+</svg>

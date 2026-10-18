@@ -1,0 +1,16 @@
+html {
+  color-scheme: dark;
+  scroll-behavior: smooth;
+}
+::selection {
+  background: #54dcf055;
+}
+button {
+  font-family: inherit;
+}
+img {
+  max-width: 100%;
+}
+[hidden] {
+  display: none !important;
+}

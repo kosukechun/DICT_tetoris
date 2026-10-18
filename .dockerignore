@@ -1,0 +1,11 @@
+node_modules
+.npm-cache
+data
+.git
+.env
+test-results
+playwright-report
+infra/parameters.local.json
+.venv
+.pytest_cache
+release

@@ -33,6 +33,8 @@ function toast(message) {
 }
 function showView(name) {
   for (const view of views) $(view + '-view').hidden = view !== name;
+  document.body.classList.toggle('game-mode', name === 'game');
+  if (name === 'game') requestAnimationFrame(fitBoards);
   window.scrollTo({ top: 0, behavior: 'instant' });
 }
 function navigate(name) {
@@ -207,6 +209,7 @@ function handleMessage(message) {
     $('queue-dialog').close();
   } else if (message.type === 'start') {
     active = message;
+    resetFeedback();
     queued = false;
     $('queue-dialog').close();
     $('result-dialog').close();
@@ -295,6 +298,60 @@ function drawCell(ctx, x, y, size, value, ghost = false) {
   }
 }
 const playerStates = new Map();
+function fitBoards() {
+  const desktop = matchMedia('(min-width: 901px)').matches;
+  for (const area of document.querySelectorAll('.board-and-side')) {
+    const wrap = area.querySelector('.board-wrap');
+    if (desktop && !$('game-view').hidden) {
+      const width = Math.max(
+        1,
+        Math.floor(Math.min(440, area.clientHeight / 2, area.clientWidth - 156))
+      );
+      wrap.style.width = `${width}px`;
+    } else wrap.style.removeProperty('width');
+  }
+}
+const boardObserver = new ResizeObserver(fitBoards);
+document.querySelectorAll('.board-and-side').forEach((area) => boardObserver.observe(area));
+window.addEventListener('resize', fitBoards);
+const feedbackStates = new Map();
+function resetFeedback() {
+  playerStates.clear();
+  for (const feedback of feedbackStates.values()) clearTimeout(feedback.timer);
+  feedbackStates.clear();
+  for (const prefix of ['self', 'rival']) {
+    $(prefix + '-cancel').hidden = true;
+    $(prefix + '-pending')
+      .closest('.stat')
+      .classList.remove('is-canceling');
+  }
+}
+function showCancellation(prefix, cancellation) {
+  if (!cancellation || feedbackStates.get(prefix)?.id === cancellation.id) return;
+  clearTimeout(feedbackStates.get(prefix)?.timer);
+  const notice = $(prefix + '-cancel');
+  notice.querySelector('b').textContent = `${cancellation.count}個 打ち消した！`;
+  notice.querySelector('small').textContent =
+    `予告 ${cancellation.before}個 → 残り ${cancellation.remaining}個` +
+    (cancellation.sent ? ` ／ 相手へ ${cancellation.sent}個` : '');
+  notice.hidden = false;
+  if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    notice.animate(
+      [
+        { opacity: 0, transform: 'scale(0.8)' },
+        { opacity: 1, transform: 'scale(1)' }
+      ],
+      { duration: 220, easing: 'ease-out' }
+    );
+  }
+  const meter = $(prefix + '-pending').closest('.stat');
+  meter.classList.add('is-canceling');
+  const timer = setTimeout(() => {
+    notice.hidden = true;
+    meter.classList.remove('is-canceling');
+  }, 2800);
+  feedbackStates.set(prefix, { id: cancellation.id, timer });
+}
 function renderPlayer(prefix, state) {
   playerStates.set(prefix, { state, receivedAt: performance.now() });
   paintBoard(prefix, state);
@@ -342,17 +399,18 @@ function paintBoard(prefix, state, extraMs = 0) {
   }
 }
 function updateStats(prefix, state) {
-  const nextCtx = $(prefix + '-next').getContext('2d');
-  nextCtx.clearRect(0, 0, 108, 216);
+  const nextCanvas = $(prefix + '-next');
+  const nextCtx = nextCanvas.getContext('2d');
+  nextCtx.clearRect(0, 0, nextCanvas.width, nextCanvas.height);
   state.next.forEach((matrix, i) =>
     matrix.forEach((row, y) =>
       row.forEach((cell, x) => {
         if (cell)
           drawCell(
             nextCtx,
-            (108 - matrix[0].length * 22) / 2 + x * 22,
-            i * 69 + y * 22 + 10,
-            22,
+            (nextCanvas.width - matrix[0].length * 28) / 2 + x * 28,
+            i * 86 + y * 28 + 10,
+            28,
             cell
           );
       })
@@ -361,6 +419,14 @@ function updateStats(prefix, state) {
   $(prefix + '-score').textContent = state.score.toLocaleString();
   $(prefix + '-lines').textContent = state.lines;
   $(prefix + '-pending').textContent = state.pending;
+  const dots = $(prefix + '-garbage');
+  if (dots.dataset.count !== String(state.pending)) {
+    dots.dataset.count = state.pending;
+    dots.replaceChildren(
+      ...Array.from({ length: state.pending }, () => document.createElement('i'))
+    );
+  }
+  showCancellation(prefix, state.cancellation);
   $(prefix + '-combo').textContent = state.canceled
     ? `相殺！ お邪魔 ${state.canceled} 個を打ち消した`
     : state.garbageActive

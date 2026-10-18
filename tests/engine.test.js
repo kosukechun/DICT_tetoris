@@ -160,6 +160,56 @@ test('予告直後の着地ではお邪魔は降らず、消去で相殺でき�
   game.lock();
   assert.equal(game.pending, 0);
   assert.equal(game.snapshot().canceled, 1);
+  assert.deepEqual(game.snapshot().cancellation, {
+    id: 1,
+    count: 1,
+    before: 1,
+    remaining: 0,
+    sent: 0
+  });
+});
+
+test('相殺通知は連続消去でも識別でき、残り予告と送り返した数を記録する', () => {
+  const game = new Game(7);
+  game.receive(3);
+  const clear = () => {
+    game.matrix = [Array(8).fill(1)];
+    game.x = 0;
+    game.y = 19;
+    game.lock();
+  };
+  clear();
+  assert.deepEqual(game.snapshot().cancellation, {
+    id: 1,
+    count: 2,
+    before: 3,
+    remaining: 1,
+    sent: 0
+  });
+  clear();
+  const expected = { id: 2, count: 1, before: 1, remaining: 0, sent: 1 };
+  assert.deepEqual(game.snapshot().cancellation, expected);
+  game.tick(3000);
+  assert.equal(game.snapshot().canceled, 0);
+  assert.deepEqual(game.snapshot().cancellation, expected);
+});
+
+test('お邪魔6個の落下待ちは約2.2秒以内に終わる', () => {
+  const game = new Game(4);
+  game.receive(6);
+  game.tick(GARBAGE_WARNING_MS);
+  game.matrix = [[1]];
+  game.x = 9;
+  game.y = 19;
+  game.lock();
+  let duration = 0;
+  while (game.garbageActive && duration < 5000) {
+    game.tick(40);
+    duration += 40;
+  }
+  assert.equal(game.pending, 0);
+  assert.equal(game.board.flat().filter((c) => c === 8).length, 6);
+  assert.ok(duration <= 2200, `Garbage wave took ${duration}ms`);
 });
 
 test('両者の攻撃は順序にかかわらず相殺され、差分だけが残る', () => {

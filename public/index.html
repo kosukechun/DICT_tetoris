@@ -130,17 +130,25 @@
               <span id="self-score">0</span>
             </div>
             <div class="board-and-side">
-              <canvas
-                id="self-board"
-                width="360"
-                height="720"
-                aria-label="自分のゲーム盤面"
-              ></canvas>
+              <div class="board-wrap">
+                <canvas
+                  id="self-board"
+                  width="440"
+                  height="880"
+                  aria-label="自分のゲーム盤面"
+                ></canvas>
+                <div id="self-cancel" class="cancel-notice" role="status" aria-live="polite" hidden>
+                  <strong>相殺！</strong><b></b><small></small>
+                </div>
+              </div>
               <aside class="board-sidebar">
-                <span class="stat-label">NEXT</span
-                ><canvas id="self-next" width="108" height="216" aria-label="次のブロック"></canvas>
-                <div class="stat"><span>CLEARED</span><b id="self-lines">0</b></div>
-                <div class="stat"><span>INCOMING</span><b id="self-pending">0</b></div>
+                <span class="stat-label">次のブロック</span
+                ><canvas id="self-next" width="140" height="264" aria-label="次のブロック"></canvas>
+                <div class="stat"><span>消した数</span><b id="self-lines">0</b></div>
+                <div class="stat garbage-stat">
+                  <span>お邪魔予告</span><b id="self-pending">0</b
+                  ><span class="garbage-dots" id="self-garbage" aria-hidden="true"></span>
+                </div>
                 <button id="shield-button" class="shield-button">
                   F9 SHIELD<small>Fキーで発動</small>
                 </button>
@@ -160,22 +168,36 @@
               <span id="rival-score">0</span>
             </div>
             <div class="board-and-side">
-              <canvas
-                id="rival-board"
-                width="360"
-                height="720"
-                aria-label="相手のゲーム盤面"
-              ></canvas>
+              <div class="board-wrap">
+                <canvas
+                  id="rival-board"
+                  width="440"
+                  height="880"
+                  aria-label="相手のゲーム盤面"
+                ></canvas>
+                <div
+                  id="rival-cancel"
+                  class="cancel-notice"
+                  role="status"
+                  aria-live="polite"
+                  hidden
+                >
+                  <strong>相殺！</strong><b></b><small></small>
+                </div>
+              </div>
               <aside class="board-sidebar">
-                <span class="stat-label">NEXT</span
+                <span class="stat-label">次のブロック</span
                 ><canvas
                   id="rival-next"
-                  width="108"
-                  height="216"
+                  width="140"
+                  height="264"
                   aria-label="相手の次のブロック"
                 ></canvas>
-                <div class="stat"><span>CLEARED</span><b id="rival-lines">0</b></div>
-                <div class="stat"><span>INCOMING</span><b id="rival-pending">0</b></div>
+                <div class="stat"><span>消した数</span><b id="rival-lines">0</b></div>
+                <div class="stat garbage-stat">
+                  <span>お邪魔予告</span><b id="rival-pending">0</b
+                  ><span class="garbage-dots" id="rival-garbage" aria-hidden="true"></span>
+                </div>
                 <div class="rival-status">ONLINE<br />OPPONENT</div>
               </aside>
             </div>
@@ -232,7 +254,7 @@
               連続で消すとコンボが加算され、2コンボごとに攻撃が1個増えます。Fキーのシールドは1試合に一度。待機中のお邪魔を最大4個消し、5秒間、攻撃1回ごとに最大4個を防ぎます。
             </p>
             <p>
-              予告から1.2秒以上たった後、消去しなかった着地でお邪魔が降り始めます。1回最大6個を、1個ずつ約0.7秒間隔で落とします。落下中は次のブロックを待ちます。
+              予告から1.2秒以上たった後、消去しなかった着地でお邪魔が降り始めます。1回最大6個を、1個ずつ約0.36秒間隔で落とします。相殺すると、盤面に打ち消した数と残りの予告が大きく表示されます。
             </p>
           </article>
           <article>

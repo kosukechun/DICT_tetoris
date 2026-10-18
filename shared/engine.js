@@ -2,8 +2,8 @@
 export const WIDTH = 10;
 export const HEIGHT = 20;
 export const GARBAGE_WARNING_MS = 1200;
-export const GARBAGE_FALL_MS = 480;
-export const GARBAGE_GAP_MS = 240;
+export const GARBAGE_FALL_MS = 240;
+export const GARBAGE_GAP_MS = 120;
 export const SHAPES = [
   [[1, 1, 1, 1]],
   [
@@ -141,6 +141,8 @@ export class Game {
     this.fallingGarbage = null;
     this.lastCanceled = 0;
     this.canceledUntil = 0;
+    this.cancelSerial = 0;
+    this.lastCancellation = null;
     this.shield = true;
     this.shieldMs = 0;
     this.over = false;
@@ -259,7 +261,14 @@ export class Game {
       attack -= canceled;
       if (canceled) {
         this.lastCanceled = canceled;
-        this.canceledUntil = this.elapsed + 1400;
+        this.canceledUntil = this.elapsed + 2800;
+        this.lastCancellation = {
+          id: ++this.cancelSerial,
+          count: canceled,
+          before: this.pending + canceled,
+          remaining: this.pending,
+          sent: attack
+        };
         this.onEvent('cancel', { count: canceled });
       }
       this.onEvent('clear', {
@@ -328,6 +337,7 @@ export class Game {
       fallingGarbage: this.fallingGarbage ? { ...this.fallingGarbage } : null,
       garbageActive: this.garbageActive,
       canceled: this.elapsed < this.canceledUntil ? this.lastCanceled : 0,
+      cancellation: this.lastCancellation,
       shield: this.shield,
       shieldMs: this.shieldMs,
       over: this.over,

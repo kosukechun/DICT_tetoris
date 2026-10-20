@@ -6,6 +6,9 @@ import {
   clearColors,
   fits,
   rotate,
+  WIDTH,
+  HEIGHT,
+  MAX_PENDING_GARBAGE,
   GARBAGE_FALL_MS,
   GARBAGE_GAP_MS,
   GARBAGE_WARNING_MS
@@ -14,40 +17,54 @@ import { playCpu } from '../server/cpu.js';
 
 test('消去は同色4個以上の上下左右のみ。3個・斜め・お邪魔は対象外', () => {
   let board = emptyBoard();
-  board[19].splice(0, 3, 1, 1, 1);
+  board[HEIGHT - 1].splice(0, 3, 1, 1, 1);
   assert.equal(clearColors(board).count, 0);
-  board[18][2] = 1;
-  board[18][3] = 8;
+  board[HEIGHT - 2][2] = 1;
+  board[HEIGHT - 2][3] = 8;
   const result = clearColors(board);
   assert.equal(result.count, 4);
   assert.equal(result.board.flat().filter(Boolean).length, 0);
   board = emptyBoard();
-  for (let i = 0; i < 4; i++) board[19 - i][i] = 2;
+  for (let i = 0; i < 4; i++) board[HEIGHT - 1 - i][i] = 2;
   assert.equal(clearColors(board).count, 0);
   board = emptyBoard();
-  board[19].fill(8);
+  board[HEIGHT - 1].fill(8);
   assert.equal(clearColors(board).count, 0);
 });
 test('消去後に重力が働き2連鎖する', () => {
   const board = emptyBoard();
   for (const [x, y] of [
-    [0, 19],
-    [1, 19],
-    [0, 18],
-    [0, 17]
+    [0, HEIGHT - 1],
+    [1, HEIGHT - 1],
+    [0, HEIGHT - 2],
+    [0, HEIGHT - 3]
   ])
     board[y][x] = 1;
   for (const [x, y] of [
-    [1, 18],
-    [1, 17],
-    [0, 16],
-    [0, 15]
+    [1, HEIGHT - 2],
+    [1, HEIGHT - 3],
+    [0, HEIGHT - 4],
+    [0, HEIGHT - 5]
   ])
     board[y][x] = 2;
   const result = clearColors(board);
   assert.equal(result.chains, 2);
   assert.equal(result.count, 8);
   assert.equal(result.board.flat().filter(Boolean).length, 0);
+});
+test('今置いたブロックと無関係な同色グループは突然まとめて消えない', () => {
+  const game = new Game(11);
+  game.board[HEIGHT - 1].splice(WIDTH - 4, 4, 2, 2, 2, 2);
+  game.matrix = [
+    [1, 1],
+    [1, 1]
+  ];
+  game.x = 0;
+  game.y = HEIGHT - 2;
+  game.lock();
+  assert.equal(game.lastClear, 4);
+  assert.equal(game.board.flat().filter((cell) => cell === 2).length, 4);
+  assert.equal(game.board.flat().filter((cell) => cell === 1).length, 0);
 });
 test('同じseedは同じブロックを生成し、左右の壁を越えない', () => {
   const a = new Game(42),
@@ -56,10 +73,28 @@ test('同じseedは同じブロックを生成し、左右の壁を越えない'
   for (let i = 0; i < 30; i++) a.action('left');
   assert.equal(a.x, 0);
   for (let i = 0; i < 30; i++) a.action('right');
-  assert.equal(a.x + a.matrix[0].length, 10);
+  assert.equal(a.x + a.matrix[0].length, WIDTH);
   const original = a.matrix;
   assert.deepEqual(rotate(rotate(rotate(rotate(original)))), original);
-  assert.equal(fits(a.board, a.matrix, a.x, 20), false);
+  assert.equal(fits(a.board, a.matrix, a.x, HEIGHT), false);
+});
+test('床際でも上方向のキックで回転し、お邪魔落下中の回転入力も次のブロックへ残る', () => {
+  const game = new Game(42);
+  game.matrix = [[1, 2, 3, 4]];
+  game.x = 3;
+  game.y = HEIGHT - 1;
+  game.action('rotate');
+  assert.equal(game.matrix.length, 4);
+  assert.equal(game.y, HEIGHT - 4);
+
+  const next = game.next[0].map((row) => [...row]);
+  game.garbageActive = true;
+  game.garbageRemaining = 0;
+  game.pending = 0;
+  game.action('rotate');
+  game.tickGarbage(0);
+  assert.deepEqual(game.matrix, rotate(next));
+  assert.equal(game.bufferedRotations, 0);
 });
 test('お邪魔を受けても公平なブロック順を維持する', () => {
   const a = new Game(42),
@@ -68,7 +103,7 @@ test('お邪魔を受けても公平なブロック順を維持する', () => {
   for (const game of [a, b]) {
     game.matrix = [[1]];
     game.x = 0;
-    game.y = 19;
+    game.y = HEIGHT - 1;
     game.lock();
   }
   while (a.garbageActive && !a.over) a.tick(40);
@@ -83,7 +118,7 @@ test('消去の攻撃は待機中のお邪魔を先に相殺する', () => {
     [1, 1]
   ];
   game.x = 0;
-  game.y = 18;
+  game.y = HEIGHT - 2;
   game.pending = 2;
   let sent = 0;
   game.onAttack = (rows) => {
@@ -99,27 +134,27 @@ test('シールドは1回のみ。最大4個の相殺と5秒の防御', () => {
   const game = new Game(1);
   game.receive(7);
   game.action('shield');
-  assert.equal(game.pending, 3);
+  assert.equal(game.pending, 2);
   assert.equal(game.shield, false);
   game.receive(6);
-  assert.equal(game.pending, 5);
+  assert.equal(game.pending, 4);
   game.tick(5000);
   game.receive(2);
-  assert.equal(game.pending, 7);
+  assert.equal(game.pending, 6);
   game.action('shield');
-  assert.equal(game.pending, 7);
+  assert.equal(game.pending, 6);
   assert.equal(game.shieldMs, 0);
 });
-test('お邪魔は予告後に上から1個ずつ落ち、1回最大6個', () => {
+test('お邪魔の予告と落下は最大6個で、超過分をスタックしない', () => {
   const game = new Game(4);
   game.receive(8);
   game.tick(GARBAGE_WARNING_MS);
   game.matrix = [[1]];
-  game.x = 9;
-  game.y = 19;
+  game.x = WIDTH - 1;
+  game.y = HEIGHT - 1;
   game.lock();
   assert.equal(game.garbageActive, true);
-  assert.equal(game.pending, 8);
+  assert.equal(game.pending, 6);
   assert.equal(game.board.flat().filter((c) => c === 8).length, 0);
   assert.ok(game.snapshot().fallingGarbage);
   const pieces = game.pieces;
@@ -129,7 +164,7 @@ test('お邪魔は予告後に上から1個ずつ落ち、1回最大6個', () =>
   assert.equal(game.board.flat().filter((c) => c === 8).length, 0);
   game.tick(1);
   assert.equal(game.board.flat().filter((c) => c === 8).length, 1);
-  assert.equal(game.pending, 7);
+  assert.equal(game.pending, 5);
   game.tick(GARBAGE_GAP_MS - 1);
   assert.equal(game.fallingGarbage, null);
   game.tick(1);
@@ -138,17 +173,63 @@ test('お邪魔は予告後に上から1個ずつ落ち、1回最大6個', () =>
     game.tick(GARBAGE_FALL_MS);
     game.tick(GARBAGE_GAP_MS);
   }
-  assert.equal(game.pending, 2);
+  assert.equal(game.pending, 0);
   assert.equal(game.board.flat().filter((c) => c === 8).length, 6);
   assert.equal(game.garbageActive, false);
+});
+
+test('追加攻撃を受けても落下中を含めてお邪魔スタックは6個まで', () => {
+  const game = new Game(4);
+  game.receive(4);
+  const readyAt = game.garbageReadyAt;
+  game.receive(4);
+  assert.equal(game.pending, MAX_PENDING_GARBAGE);
+  assert.equal(game.garbageReadyAt, readyAt);
+  game.tick(GARBAGE_WARNING_MS);
+  game.matrix = [[1]];
+  game.x = WIDTH - 1;
+  game.y = HEIGHT - 1;
+  game.lock();
+  assert.ok(game.fallingGarbage);
+  game.receive(20);
+  assert.equal(game.snapshot().pending, MAX_PENDING_GARBAGE);
+  game.tick(GARBAGE_FALL_MS);
+  assert.equal(game.pending, MAX_PENDING_GARBAGE - 1);
+  game.receive(20);
+  assert.equal(game.pending, MAX_PENDING_GARBAGE);
+  game.action('shield');
+  assert.equal(game.pending, MAX_PENDING_GARBAGE - 4);
+  game.receive(20);
+  assert.equal(game.pending, MAX_PENDING_GARBAGE);
+});
+
+test('大きなコンボでも攻撃は最大6個で、予告の相殺を優先する', () => {
+  for (const pending of [0, 4, 6]) {
+    const game = new Game(1);
+    game.receive(pending);
+    game.matrix = [
+      [1, 1],
+      [1, 1]
+    ];
+    game.x = 0;
+    game.y = HEIGHT - 2;
+    game.combo = 20;
+    let sent = 0;
+    game.onAttack = (count) => {
+      sent += count;
+    };
+    game.lock();
+    assert.equal(sent, 6 - pending);
+    assert.equal(game.pending, 0);
+  }
 });
 
 test('予告直後の着地ではお邪魔は降らず、消去で相殺できる', () => {
   const game = new Game(3);
   game.receive(1);
   game.matrix = [[2]];
-  game.x = 9;
-  game.y = 19;
+  game.x = WIDTH - 1;
+  game.y = HEIGHT - 1;
   game.lock();
   assert.equal(game.garbageActive, false);
   game.matrix = [
@@ -156,7 +237,7 @@ test('予告直後の着地ではお邪魔は降らず、消去で相殺でき�
     [1, 1]
   ];
   game.x = 0;
-  game.y = 18;
+  game.y = HEIGHT - 2;
   game.lock();
   assert.equal(game.pending, 0);
   assert.equal(game.snapshot().canceled, 1);
@@ -175,7 +256,7 @@ test('相殺通知は連続消去でも識別でき、残り予告と送り返�
   const clear = () => {
     game.matrix = [Array(8).fill(1)];
     game.x = 0;
-    game.y = 19;
+    game.y = HEIGHT - 1;
     game.lock();
   };
   clear();
@@ -189,18 +270,21 @@ test('相殺通知は連続消去でも識別でき、残り予告と送り返�
   clear();
   const expected = { id: 2, count: 1, before: 1, remaining: 0, sent: 1 };
   assert.deepEqual(game.snapshot().cancellation, expected);
-  game.tick(3000);
+  assert.equal(game.snapshot().canceled, 1);
+  game.tick(249);
+  assert.equal(game.snapshot().canceled, 1);
+  game.tick(1);
   assert.equal(game.snapshot().canceled, 0);
   assert.deepEqual(game.snapshot().cancellation, expected);
 });
 
-test('お邪魔6個の落下待ちは約2.2秒以内に終わる', () => {
+test('お邪魔6個の落下待ちは約1.5秒以内に終わる', () => {
   const game = new Game(4);
   game.receive(6);
   game.tick(GARBAGE_WARNING_MS);
   game.matrix = [[1]];
-  game.x = 9;
-  game.y = 19;
+  game.x = WIDTH - 1;
+  game.y = HEIGHT - 1;
   game.lock();
   let duration = 0;
   while (game.garbageActive && duration < 5000) {
@@ -209,7 +293,7 @@ test('お邪魔6個の落下待ちは約2.2秒以内に終わる', () => {
   }
   assert.equal(game.pending, 0);
   assert.equal(game.board.flat().filter((c) => c === 8).length, 6);
-  assert.ok(duration <= 2200, `Garbage wave took ${duration}ms`);
+  assert.ok(duration <= 1500, `Garbage wave took ${duration}ms`);
 });
 
 test('両者の攻撃は順序にかかわらず相殺され、差分だけが残る', () => {
@@ -226,7 +310,7 @@ test('両者の攻撃は順序にかかわらず相殺され、差分だけが�
         g.onAttack = (n) => games[1 - i].receive(n);
         g.matrix = [Array(counts[i]).fill(1)];
         g.x = 0;
-        g.y = 19;
+        g.y = HEIGHT - 1;
       });
       order.forEach((i) => games[i].lock());
       assert.equal(games[0].pending, 0);
@@ -240,10 +324,10 @@ test('落下中のシールドで最後のお邪魔を消すと盤面には残�
   game.receive(1);
   game.tick(GARBAGE_WARNING_MS);
   game.matrix = [[1]];
-  game.x = 9;
-  game.y = 19;
+  game.x = WIDTH - 1;
+  game.y = HEIGHT - 1;
   game.lock();
-  game.tick(200);
+  game.tick(GARBAGE_FALL_MS - 20);
   game.action('shield');
   game.tick(GARBAGE_FALL_MS);
   assert.equal(game.garbageActive, false);
@@ -259,15 +343,15 @@ test('お邪魔が天井に届くと負ける。既存の盤面は押し上げ�
   game.tick(0);
   game.tick(GARBAGE_FALL_MS);
   assert.equal(game.over, true);
-  assert.deepEqual(game.board[1], Array(10).fill(2));
+  assert.deepEqual(game.board[1], Array(WIDTH).fill(2));
 });
 test('CPUは全難易度で合法な配置を行う', () => {
   for (const difficulty of ['easy', 'normal', 'hard']) {
     const game = new Game(25);
     for (let i = 0; i < 30 && !game.over; i++) {
       playCpu(game, difficulty);
-      assert.equal(game.board.length, 20);
-      assert.ok(game.board.every((row) => row.length === 10));
+      assert.equal(game.board.length, HEIGHT);
+      assert.ok(game.board.every((row) => row.length === WIDTH));
     }
     assert.ok(game.pieces > 5);
   }

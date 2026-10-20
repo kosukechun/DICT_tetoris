@@ -1,8 +1,8 @@
 import { fits, rotate, clearLines, clearColors, WIDTH, HEIGHT } from '../shared/engine.js';
 export const DIFFICULTIES = {
-  easy: { delay: 1250, noise: 9 },
-  normal: { delay: 700, noise: 2 },
-  hard: { delay: 260, noise: 0 }
+  easy: { delay: 2400, noise: 28 },
+  normal: { delay: 1600, noise: 16 },
+  hard: { delay: 900, noise: 8 }
 };
 
 // Evaluate legal placements using holes, aggregate height, roughness and clears.
@@ -26,7 +26,13 @@ export function choosePlacement(game, difficulty = 'normal', random = Math.rando
           if (cell) board[y + dy][x + dx] = cell;
         })
       );
-      const cleared = game.rule === 'colors' ? clearColors(board) : clearLines(board);
+      const lockedCells = [];
+      matrix.forEach((row, dy) =>
+        row.forEach((cell, dx) => {
+          if (cell) lockedCells.push([x + dx, y + dy]);
+        })
+      );
+      const cleared = game.rule === 'colors' ? clearColors(board, lockedCells) : clearLines(board);
       const heights = [],
         clean = cleared.board;
       let holes = 0;

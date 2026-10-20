@@ -186,6 +186,8 @@ server.on('upgrade', (req, socket, head) => {
           try {
             const message = JSON.parse(data.toString());
             if (message.type === 'join') matchmaker.join(client, message.mode, message.difficulty);
+            else if (message.type === 'cheat')
+              matchmaker.setCheat(client, message.enabled !== false, message.password);
             else if (message.type === 'cancel') {
               matchmaker.unqueue(client);
               matchmaker.send(client, 'canceled');

@@ -1,9 +1,15 @@
 // Pure game rules shared by the authoritative server, renderer and tests.
-export const WIDTH = 10;
-export const HEIGHT = 20;
+export const WIDTH = 9;
+export const HEIGHT = 15;
+export const MAX_GARBAGE = 6;
+export const MAX_PENDING_GARBAGE = 6;
 export const GARBAGE_WARNING_MS = 1200;
-export const GARBAGE_FALL_MS = 240;
-export const GARBAGE_GAP_MS = 120;
+export const GARBAGE_FALL_MS = 150;
+export const GARBAGE_GAP_MS = 50;
+export const CANCELLATION_FEEDBACK_MS = 250;
+// Keep automatic gravity stable for the whole match. Player-controlled soft drop
+// remains faster, but elapsed time must never make pieces uncontrollably fast.
+export const GRAVITY_INTERVAL_MS = 650;
 export const SHAPES = [
   [[1, 1, 1, 1]],
   [
@@ -63,10 +69,12 @@ export function clearLines(board) {
     chains: count ? 1 : 0
   };
 }
-export function clearColors(board) {
+export function clearColors(board, triggerCells = null) {
   board = board.map((row) => [...row]);
   let count = 0,
     chains = 0;
+  const targeted = triggerCells !== null;
+  let active = targeted ? new Set(triggerCells.map(([x, y]) => y * WIDTH + x)) : null;
   while (true) {
     const seen = new Set(),
       cleared = [];
@@ -99,25 +107,37 @@ export function clearColors(board) {
             }
           }
         }
-        if (group.length >= 4) cleared.push(...group);
+        if (group.length >= 4 && (!active || group.some(([gx, gy]) => active.has(gy * WIDTH + gx))))
+          cleared.push(...group);
       }
     if (!cleared.length) break;
     chains++;
     count += cleared.length;
+    const affectedColumns = new Set();
     // Adjacent garbage disappears with a color group.
     for (const [x, y] of cleared) {
       board[y][x] = 0;
+      affectedColumns.add(x);
       for (const [nx, ny] of [
         [x - 1, y],
         [x + 1, y],
         [x, y - 1],
         [x, y + 1]
       ])
-        if (board[ny]?.[nx] === 8) board[ny][nx] = 0;
+        if (board[ny]?.[nx] === 8) {
+          board[ny][nx] = 0;
+          affectedColumns.add(nx);
+        }
     }
-    for (let x = 0; x < WIDTH; x++) {
+    for (const x of affectedColumns) {
       const column = board.map((row) => row[x]).filter(Boolean);
       for (let y = HEIGHT - 1; y >= 0; y--) board[y][x] = column.pop() || 0;
+    }
+    if (targeted) {
+      active = new Set();
+      for (const x of affectedColumns)
+        for (let y = 0; y < HEIGHT; y++)
+          if (board[y][x] && board[y][x] !== 8) active.add(y * WIDTH + x);
     }
   }
   return { board, count, chains };
@@ -150,6 +170,7 @@ export class Game {
     this.gravity = 0;
     this.pieces = 0;
     this.lastClear = 0;
+    this.bufferedRotations = 0;
     this.onAttack = () => {};
     this.onEvent = () => {};
     for (let i = 0; i < 4; i++) this.next.push(this.draw());
@@ -174,7 +195,14 @@ export class Game {
     this.x = Math.floor((WIDTH - this.matrix[0].length) / 2);
     this.y = 0;
     this.gravity = 0;
-    if (!fits(this.board, this.matrix, this.x, this.y)) this.over = true;
+    if (!fits(this.board, this.matrix, this.x, this.y)) {
+      this.over = true;
+      return;
+    }
+    while (this.bufferedRotations > 0) {
+      this.tryRotate();
+      this.bufferedRotations--;
+    }
   }
   move(dx, dy) {
     if (fits(this.board, this.matrix, this.x + dx, this.y + dy)) {
@@ -186,18 +214,14 @@ export class Game {
   }
   action(action) {
     if (this.over) return;
-    if (this.garbageActive && action !== 'shield') return;
+    if (this.garbageActive && action !== 'shield') {
+      if (action === 'rotate') this.bufferedRotations = (this.bufferedRotations + 1) % 4;
+      return;
+    }
     if (action === 'left') this.move(-1, 0);
     else if (action === 'right') this.move(1, 0);
-    else if (action === 'rotate') {
-      const rotated = rotate(this.matrix);
-      for (const offset of [0, -1, 1, -2, 2])
-        if (fits(this.board, rotated, this.x + offset, this.y)) {
-          this.matrix = rotated;
-          this.x += offset;
-          break;
-        }
-    } else if (action === 'down') {
+    else if (action === 'rotate') this.tryRotate();
+    else if (action === 'down') {
       if (this.move(0, 1)) this.score++;
       else this.lock();
     } else if (action === 'drop') {
@@ -213,6 +237,28 @@ export class Game {
       this.onEvent('shield', { blocked });
     }
   }
+  tryRotate() {
+    const rotated = rotate(this.matrix);
+    for (const [dx, dy] of [
+      [0, 0],
+      [-1, 0],
+      [1, 0],
+      [-2, 0],
+      [2, 0],
+      [0, -1],
+      [-1, -1],
+      [1, -1],
+      [0, -2],
+      [0, -3]
+    ])
+      if (fits(this.board, rotated, this.x + dx, this.y + dy)) {
+        this.matrix = rotated;
+        this.x += dx;
+        this.y += dy;
+        return true;
+      }
+    return false;
+  }
   tick(ms) {
     if (this.over) return;
     this.elapsed += ms;
@@ -222,8 +268,7 @@ export class Game {
       return;
     }
     this.gravity += ms;
-    const speed = Math.max(130, 800 - Math.floor(this.elapsed / 30000) * 65);
-    if (this.gravity >= speed) {
+    if (this.gravity >= GRAVITY_INTERVAL_MS) {
       this.gravity = 0;
       if (!this.move(0, 1)) this.lock();
     }
@@ -231,16 +276,21 @@ export class Game {
   receive(rows) {
     const blocked = this.shieldMs > 0 ? Math.min(rows, 4) : 0;
     if (!this.pending) this.garbageReadyAt = this.elapsed + GARBAGE_WARNING_MS;
-    this.pending = Math.min(20, this.pending + rows - blocked);
+    this.pending = Math.min(MAX_PENDING_GARBAGE, this.pending + rows - blocked);
     if (blocked) this.onEvent('blocked', { rows: blocked });
   }
   lock() {
+    const lockedCells = [];
     this.matrix.forEach((row, dy) =>
       row.forEach((cell, dx) => {
-        if (cell) this.board[this.y + dy][this.x + dx] = cell;
+        if (cell) {
+          this.board[this.y + dy][this.x + dx] = cell;
+          lockedCells.push([this.x + dx, this.y + dy]);
+        }
       })
     );
-    const cleared = this.rule === 'colors' ? clearColors(this.board) : clearLines(this.board);
+    const cleared =
+      this.rule === 'colors' ? clearColors(this.board, lockedCells) : clearLines(this.board);
     this.board = cleared.board;
     this.lastClear = cleared.count;
     this.pieces++;
@@ -252,16 +302,18 @@ export class Game {
           ? cleared.count * 50 * cleared.chains
           : [0, 100, 300, 500, 800][cleared.count]) +
         this.combo * 100;
-      let attack =
+      let attack = Math.min(
+        MAX_GARBAGE,
         (this.rule === 'colors'
           ? Math.floor(cleared.count / 4) + cleared.chains - 1
-          : [0, 0, 1, 2, 4][cleared.count]) + Math.floor(this.combo / 2);
+          : [0, 0, 1, 2, 4][cleared.count]) + Math.floor(this.combo / 2)
+      );
       const canceled = Math.min(this.pending, attack);
       this.pending -= canceled;
       attack -= canceled;
       if (canceled) {
         this.lastCanceled = canceled;
-        this.canceledUntil = this.elapsed + 2800;
+        this.canceledUntil = this.elapsed + CANCELLATION_FEEDBACK_MS;
         this.lastCancellation = {
           id: ++this.cancelSerial,
           count: canceled,
@@ -283,7 +335,7 @@ export class Game {
       this.combo = -1;
       if (this.pending && this.elapsed >= this.garbageReadyAt) {
         this.garbageActive = true;
-        this.garbageRemaining = Math.min(6, this.pending);
+        this.garbageRemaining = Math.min(MAX_GARBAGE, this.pending);
         this.garbageClock = 0;
         this.tickGarbage(0);
         return;

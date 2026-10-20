@@ -1,16 +1,16 @@
-import { fits, GARBAGE_FALL_MS } from '/shared/engine.js';
+import { fits, GARBAGE_FALL_MS, WIDTH, HEIGHT } from '/shared/engine.js';
 const $ = (id) => document.getElementById(id);
 const views = ['home', 'game', 'history', 'guide'];
 const colors = [
   '#000000',
-  '#a2eff8',
-  '#ffe2a3',
-  '#d1c4ff',
-  '#ffc0d4',
-  '#bcf0d3',
-  '#b7d5ff',
-  '#ffd0ab',
-  '#d5dfed'
+  '#00a9bd',
+  '#e6a51d',
+  '#7156d9',
+  '#dc3f78',
+  '#28a96d',
+  '#397bd1',
+  '#dc6d24',
+  '#66758a'
 ];
 let user = null,
   socket = null,
@@ -19,7 +19,8 @@ let user = null,
 let queued = false,
   history = [],
   pendingIntent = null,
-  resultId = null;
+  resultId = null,
+  cheatEnabled = false;
 let toastTimer, countdownTimer;
 const held = new Map();
 
@@ -74,6 +75,18 @@ function updateAccount() {
   $('player-label').textContent = user ? user.nickname : 'GUEST PLAYER';
   $('account-button').textContent = user ? '名前を変更' : '名前を登録';
 }
+function updateCheatButton() {
+  const button = $('cheat-button');
+  button.classList.toggle('is-active', cheatEnabled);
+  button.setAttribute('aria-pressed', String(cheatEnabled));
+  button.querySelector('b').textContent = cheatEnabled ? 'ON' : 'OFF';
+}
+function openCheat() {
+  $('cheat-error').textContent = '';
+  $('cheat-form').reset();
+  $('cheat-dialog').showModal();
+  $('cheat-form').elements.password.focus();
+}
 function openAuth() {
   $('auth-error').textContent = '';
   $('auth-dialog').showModal();
@@ -106,6 +119,7 @@ $('auth-form').addEventListener('submit', async (event) => {
     const intent = pendingIntent;
     pendingIntent = null;
     if (intent === 'history') await loadHistory();
+    else if (intent === 'cheat') openCheat();
     else if (intent) await startBattle(intent);
   } catch (error) {
     $('auth-error').textContent = error.message;
@@ -140,6 +154,8 @@ async function connect() {
     ws.addEventListener('close', () => {
       clearTimeout(timer);
       if (socket === ws) socket = null;
+      cheatEnabled = false;
+      updateCheatButton();
       if (!ready)
         reject(
           new Error('接続できません。同じブラウザーの別タブを閉じて、もう一度お試しください。')
@@ -187,6 +203,37 @@ async function startBattle(mode) {
 }
 $('online-button').addEventListener('click', () => startBattle('online'));
 $('cpu-button').addEventListener('click', () => startBattle('cpu'));
+$('cheat-button').addEventListener('click', () => {
+  if (active || queued) {
+    toast('対戦・待機を終了してからチートモードを切り替えてください。');
+    return;
+  }
+  if (!user) {
+    pendingIntent = 'cheat';
+    openAuth();
+    return;
+  }
+  if (cheatEnabled) {
+    send({ type: 'cheat', enabled: false });
+    return;
+  }
+  openCheat();
+});
+$('cheat-close').addEventListener('click', () => $('cheat-dialog').close());
+$('cheat-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const password = event.currentTarget.elements.password.value;
+  $('cheat-submit').disabled = true;
+  $('cheat-error').textContent = '';
+  try {
+    await connect();
+    send({ type: 'cheat', password });
+  } catch (error) {
+    $('cheat-error').textContent = error.message;
+  } finally {
+    $('cheat-submit').disabled = false;
+  }
+});
 $('queue-cancel').addEventListener('click', () => send({ type: 'cancel' }));
 $('queue-cpu').addEventListener('click', () => {
   send({ type: 'cancel' });
@@ -207,8 +254,19 @@ function handleMessage(message) {
   } else if (message.type === 'canceled') {
     queued = false;
     $('queue-dialog').close();
+  } else if (message.type === 'cheat') {
+    cheatEnabled = message.enabled;
+    updateCheatButton();
+    if (message.enabled) {
+      $('cheat-dialog').close();
+      $('cheat-form').reset();
+      toast('チートモードをONにしました。');
+    } else if (message.message) $('cheat-error').textContent = message.message;
+    else toast('チートモードをOFFにしました。');
   } else if (message.type === 'start') {
     active = message;
+    cheatEnabled = Boolean(message.cheatEnabled);
+    updateCheatButton();
     resetFeedback();
     queued = false;
     $('queue-dialog').close();
@@ -253,11 +311,13 @@ function handleMessage(message) {
       disconnect: '接続切れ',
       forfeit: '途中終了',
       topout: 'ブロックが上まで到達',
-      time: '10分経過',
+      time: '5分経過',
       server_shutdown: 'サーバー再起動'
     };
     $('result-detail').textContent =
-      `${reasons[message.reason]} / あなた ${message.scores[seat].toLocaleString()} : 相手 ${message.scores[1 - seat].toLocaleString()}`;
+      message.reason === 'time'
+        ? `${reasons.time} / 盤面ブロック あなた ${message.blockCounts[seat]}個 : 相手 ${message.blockCounts[1 - seat]}個（少ない方が勝利）`
+        : `${reasons[message.reason]} / あなた ${message.scores[seat].toLocaleString()} : 相手 ${message.scores[1 - seat].toLocaleString()}`;
     $('save-status').textContent = '対戦ログを保存しています…';
     $('result-dialog').showModal();
   } else if (message.type === 'saved' && message.id === resultId) {
@@ -279,20 +339,20 @@ function drawCell(ctx, x, y, size, value, ghost = false) {
     return;
   }
   const glass = ctx.createLinearGradient(x, y, x + size, y + size);
-  glass.addColorStop(0, colors[value] + 'c4');
-  glass.addColorStop(1, colors[value] + '66');
+  glass.addColorStop(0, colors[value]);
+  glass.addColorStop(1, colors[value]);
   ctx.fillStyle = glass;
-  ctx.fillRect(x + 1, y + 1, size - 2, size - 2);
-  ctx.strokeStyle = colors[value] + 'e0';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(x + 1.5, y + 1.5, size - 3, size - 3);
-  ctx.fillStyle = '#ffffff30';
-  ctx.fillRect(x + 3, y + 3, size - 6, 3);
-  ctx.fillStyle = '#ffffff14';
-  ctx.fillRect(x + 3, y + size - 6, size - 6, 3);
+  ctx.fillRect(x + 0.35, y + 0.35, size - 0.7, size - 0.7);
+  ctx.strokeStyle = '#ffffffcc';
+  ctx.lineWidth = 1.4;
+  ctx.strokeRect(x + 1.05, y + 1.05, size - 2.1, size - 2.1);
+  ctx.fillStyle = '#ffffff55';
+  ctx.fillRect(x + 3, y + 3, size - 6, 4);
+  ctx.fillStyle = '#00000018';
+  ctx.fillRect(x + 3, y + size - 7, size - 6, 4);
   if (value !== 8) {
-    ctx.fillStyle = '#ffffffb0';
-    ctx.font = `${size * 0.32}px monospace`;
+    ctx.fillStyle = '#ffffffee';
+    ctx.font = `bold ${size * 0.38}px monospace`;
     ctx.textAlign = 'center';
     ctx.fillText(['', '●', '◆', '＋', '■', '◊', '○', '△'][value], x + size / 2, y + size * 0.65);
   }
@@ -305,7 +365,7 @@ function fitBoards() {
     if (desktop && !$('game-view').hidden) {
       const width = Math.max(
         1,
-        Math.floor(Math.min(440, area.clientHeight / 2, area.clientWidth - 156))
+        Math.floor(Math.min(600, area.clientHeight / (HEIGHT / WIDTH), area.clientWidth - 156))
       );
       wrap.style.width = `${width}px`;
     } else wrap.style.removeProperty('width');
@@ -341,7 +401,7 @@ function showCancellation(prefix, cancellation) {
         { opacity: 0, transform: 'scale(0.8)' },
         { opacity: 1, transform: 'scale(1)' }
       ],
-      { duration: 220, easing: 'ease-out' }
+      { duration: 100, easing: 'ease-out' }
     );
   }
   const meter = $(prefix + '-pending').closest('.stat');
@@ -349,7 +409,7 @@ function showCancellation(prefix, cancellation) {
   const timer = setTimeout(() => {
     notice.hidden = true;
     meter.classList.remove('is-canceling');
-  }, 2800);
+  }, 250);
   feedbackStates.set(prefix, { id: cancellation.id, timer });
 }
 function renderPlayer(prefix, state) {
@@ -360,17 +420,17 @@ function renderPlayer(prefix, state) {
 function paintBoard(prefix, state, extraMs = 0) {
   const canvas = $(prefix + '-board'),
     ctx = canvas.getContext('2d'),
-    size = canvas.width / 10;
+    size = canvas.width / WIDTH;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.strokeStyle = '#1b2a3a66';
   ctx.lineWidth = 0.5;
-  for (let x = 0; x <= 10; x++) {
+  for (let x = 0; x <= WIDTH; x++) {
     ctx.beginPath();
     ctx.moveTo(x * size, 0);
     ctx.lineTo(x * size, canvas.height);
     ctx.stroke();
   }
-  for (let y = 0; y <= 20; y++) {
+  for (let y = 0; y <= HEIGHT; y++) {
     ctx.beginPath();
     ctx.moveTo(0, y * size);
     ctx.lineTo(canvas.width, y * size);
@@ -479,7 +539,10 @@ document.addEventListener('keydown', (event) => {
   if (event.repeat || held.has(event.code)) return;
   action(command);
   if (['left', 'right', 'down'].includes(command))
-    held.set(event.code, { command, next: performance.now() + 160 });
+    held.set(event.code, {
+      command,
+      next: performance.now() + (command === 'down' ? 80 : 160)
+    });
 });
 document.addEventListener('keyup', (event) => held.delete(event.code));
 window.addEventListener('blur', clearHeld);
@@ -488,7 +551,7 @@ setInterval(() => {
   for (const value of held.values())
     if (performance.now() >= value.next) {
       action(value.command);
-      value.next = performance.now() + 80;
+      value.next = performance.now() + (value.command === 'down' ? 60 : 80);
     }
 }, 20);
 document.querySelectorAll('[data-action]').forEach((button) => {
@@ -498,7 +561,10 @@ document.querySelectorAll('[data-action]').forEach((button) => {
     const command = button.dataset.action;
     action(command);
     if (['left', 'right', 'down'].includes(command))
-      held.set('touch', { command, next: performance.now() + 160 });
+      held.set('touch', {
+        command,
+        next: performance.now() + (command === 'down' ? 80 : 160)
+      });
   });
   for (const event of ['pointerup', 'pointercancel', 'lostpointercapture'])
     button.addEventListener(event, () => held.delete('touch'));
@@ -556,7 +622,11 @@ async function loadHistory() {
         (match.difficulty ? 'CPU ' + match.difficulty : 'オンライン');
       details.append(date);
       const score = document.createElement('b');
-      score.textContent = match.scores[seat].toLocaleString();
+      score.textContent =
+        match.reason === 'time' && match.blockCounts
+          ? `${match.blockCounts[seat]}個`
+          : match.scores[seat].toLocaleString();
+      score.title = match.reason === 'time' ? '終了時の盤面ブロック数' : 'スコア';
       row.append(result, details, score);
       $('history-list').append(row);
     }

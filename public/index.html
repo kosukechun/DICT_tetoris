@@ -30,6 +30,9 @@
     </header>
     <main>
       <section id="home-view" class="view">
+        <button id="cheat-button" class="cheat-toggle" type="button" aria-pressed="false">
+          <small>CHEAT MODE</small><b>OFF</b>
+        </button>
         <div class="hero">
           <div class="hero-copy">
             <div class="eyebrow"><span></span> CONNECT. STACK. CHAIN.</div>
@@ -62,7 +65,7 @@
             <span class="eyebrow muted">SELECT YOUR BATTLE</span>
             <h2>今日は、誰と戦う？</h2>
           </div>
-          <span class="subtle">1対1 / 1ゲーム最大10分</span>
+          <span class="subtle">1対1 / 1ゲーム最大5分</span>
         </div>
         <div class="mode-grid">
           <article class="mode-card online-card">
@@ -133,8 +136,8 @@
               <div class="board-wrap">
                 <canvas
                   id="self-board"
-                  width="440"
-                  height="880"
+                  width="600"
+                  height="1000"
                   aria-label="自分のゲーム盤面"
                 ></canvas>
                 <div id="self-cancel" class="cancel-notice" role="status" aria-live="polite" hidden>
@@ -171,8 +174,8 @@
               <div class="board-wrap">
                 <canvas
                   id="rival-board"
-                  width="440"
-                  height="880"
+                  width="600"
+                  height="1000"
                   aria-label="相手のゲーム盤面"
                 ></canvas>
                 <div
@@ -241,20 +244,23 @@
               4個組のブロックを落とし、同じ色を上下左右に4個以上つなげると消えます。斜めのつながりは数えません。消えた後に上のブロックが落ち、さらに4個つながると連鎖します。
             </p>
             <p>
-              盤面は横10×縦20。次のブロックを置けなくなったら負けです。10分経過時はスコアで勝敗を決めます。
+              盤面は横9×縦15。次のブロックを置けなくなったら負けです。5分経過時は盤面に残ったブロックが少ない方を勝者とし、同数なら引き分けです。
             </p>
           </article>
           <article>
             <h2>02 / お邪魔と追加機能</h2>
             <p>
               消去数÷4の整数部分 ＋ 連鎖数−1 ＋
-              コンボのボーナスがお邪魔の個数になります。消去による攻撃は、まず自分に届く予定のお邪魔と相殺し、余った分だけ相手へ送ります。灰色のお邪魔は隣の色を消すと消去できます。
+              コンボのボーナスがお邪魔の個数になります（最大6個）。消去による攻撃は、まず自分に届く予定のお邪魔と相殺し、余った分だけ相手へ送ります。灰色のお邪魔は隣の色を消すと消去できます。
             </p>
             <p>
               連続で消すとコンボが加算され、2コンボごとに攻撃が1個増えます。Fキーのシールドは1試合に一度。待機中のお邪魔を最大4個消し、5秒間、攻撃1回ごとに最大4個を防ぎます。
             </p>
             <p>
-              予告から1.2秒以上たった後、消去しなかった着地でお邪魔が降り始めます。1回最大6個を、1個ずつ約0.36秒間隔で落とします。相殺すると、盤面に打ち消した数と残りの予告が大きく表示されます。
+              ホーム右端のチートモードをパスワードでONにすると、対戦中は5秒ごとに相手へお邪魔を2個送ります。CPU戦とオンライン対戦の両方で使えます。
+            </p>
+            <p>
+              予告から1.2秒以上たった後、消去しなかった着地でお邪魔が降り始めます。予告も1回の落下も最大6個です。1個ずつ約0.2秒間隔で落とします。相殺すると、盤面に打ち消した数と残りの予告を0.25秒表示します。
             </p>
           </article>
           <article>
@@ -265,7 +271,7 @@
               <dt>↑</dt>
               <dd>時計回りに回転</dd>
               <dt>↓</dt>
-              <dd>1マス下へ（長押し可）</dd>
+              <dd>60ms間隔で下へ（長押し可）</dd>
               <dt>Space</dt>
               <dd>一番下へ即座に固定</dd>
               <dt>F</dt>
@@ -317,6 +323,24 @@
       <p class="subtle">別のプレーヤーが「対戦相手を探す」を<br />押すと対戦が始まります。</p>
       <button id="queue-cpu" class="primary-button">CPU戦に切り替える →</button
       ><button id="queue-cancel" class="text-button">待機を取り消す</button>
+    </dialog>
+    <dialog id="cheat-dialog">
+      <button class="dialog-close" id="cheat-close" aria-label="閉じる">×</button
+      ><span class="eyebrow">CHEAT MODE</span>
+      <h2>チートモードをONにする</h2>
+      <p class="subtle">対戦中、5秒ごとに相手へお邪魔ブロックを2個送ります。</p>
+      <form id="cheat-form">
+        <label
+          >パスワード<input
+            name="password"
+            type="password"
+            required
+            autocomplete="off"
+            placeholder="パスワードを入力"
+        /></label>
+        <p id="cheat-error" class="form-error" role="alert"></p>
+        <button class="primary-button" id="cheat-submit" type="submit">ONにする →</button>
+      </form>
     </dialog>
     <dialog id="result-dialog">
       <span class="eyebrow">BATTLE RESULT</span>

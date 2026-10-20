@@ -7,6 +7,7 @@ import path from 'node:path';
 import { once } from 'node:events';
 import WebSocket from 'ws';
 import { createStore } from '../server/store.js';
+import { rotate } from '../shared/engine.js';
 const base = 'http://127.0.0.1:3197';
 
 function inbox(ws) {
@@ -115,8 +116,20 @@ test('名前登録・同時対戦・勝敗・ログの再起動後永続化', { 
     second = await two.next('start');
   assert.equal(first.id, second.id);
   assert.notEqual(first.seat, second.seat);
-  assert.equal((await one.next('state')).states.length, 2);
+  const initialState = await one.next('state');
+  assert.equal(initialState.states.length, 2);
   await new Promise((resolve) => setTimeout(resolve, 3100));
+  const expectedRotation = rotate(initialState.states[first.seat].matrix);
+  one.send({ type: 'action', action: 'rotate' });
+  let rotationReceived = false;
+  for (let i = 0; i < 60; i++) {
+    const state = await one.next('state');
+    if (JSON.stringify(state.states[first.seat].matrix) === JSON.stringify(expectedRotation)) {
+      rotationReceived = true;
+      break;
+    }
+  }
+  assert.equal(rotationReceived, true, 'online rotation was not reflected by the server');
   one.send({ type: 'action', action: 'forfeit' });
   const result = await one.next('result');
   assert.equal(result.winner, second.seat);

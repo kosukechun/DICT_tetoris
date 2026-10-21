@@ -12,6 +12,45 @@ export const countBoardBlocks = (game) =>
     0
   );
 
+export function summarizeOpponents(matches, username) {
+  const summaries = new Map();
+  for (const match of matches) {
+    if (match.difficulty || !Array.isArray(match.players)) continue;
+    const seat = match.players.findIndex((player) => player.username === username);
+    if (seat < 0 || !match.players[1 - seat]) continue;
+    const opponent = match.players[1 - seat];
+    let summary = summaries.get(opponent.username);
+    if (!summary) {
+      summary = {
+        opponent: { username: opponent.username, nickname: opponent.nickname },
+        games: 0,
+        wins: 0,
+        losses: 0,
+        draws: 0,
+        totalDuration: 0,
+        latestAt: match.startedAt
+      };
+      summaries.set(opponent.username, summary);
+    }
+    summary.games++;
+    summary.totalDuration += Math.max(0, Number(match.duration) || 0);
+    if (match.winner === null) summary.draws++;
+    else if (match.winner === seat) summary.wins++;
+    else summary.losses++;
+    if (match.startedAt > summary.latestAt) {
+      summary.latestAt = match.startedAt;
+      summary.opponent.nickname = opponent.nickname;
+    }
+  }
+  return [...summaries.values()]
+    .map((summary) => ({
+      ...summary,
+      winRate: summary.games ? summary.wins / summary.games : 0,
+      averageDuration: summary.games ? Math.round(summary.totalDuration / summary.games) : 0
+    }))
+    .sort((a, b) => b.games - a.games || b.latestAt.localeCompare(a.latestAt));
+}
+
 export class Matchmaker {
   constructor(store, { now = () => Date.now() } = {}) {
     this.store = store;

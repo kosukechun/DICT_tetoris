@@ -597,9 +597,12 @@ async function loadHistory() {
   }
   showView('history');
   $('history-list').textContent = '読み込み中…';
+  $('opponent-stats-list').textContent = '集計中…';
   $('export-button').disabled = true;
   try {
-    history = (await api('history')).matches;
+    const data = await api('history');
+    history = data.matches;
+    renderOpponentStats(data.opponentStats || []);
     $('history-list').replaceChildren();
     if (!history.length) {
       const p = document.createElement('p');
@@ -633,6 +636,79 @@ async function loadHistory() {
     $('export-button').disabled = !history.length;
   } catch (error) {
     $('history-list').textContent = error.message;
+    $('opponent-stats-list').textContent = '戦績を読み込めませんでした。';
+  }
+}
+function formatPlayTime(milliseconds) {
+  const totalSeconds = Math.max(0, Math.round(milliseconds / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return [
+    hours ? `${hours}時間` : '',
+    minutes ? `${minutes}分` : '',
+    seconds || (!hours && !minutes) ? `${seconds}秒` : ''
+  ]
+    .filter(Boolean)
+    .join('');
+}
+function formatJapaneseWinRate(rate) {
+  const percent = Math.round(Math.max(0, Math.min(1, rate)) * 100);
+  const wari = Math.floor(percent / 10),
+    bu = percent % 10;
+  return `${wari}割${bu ? `${bu}分` : ''}`;
+}
+function renderOpponentStats(stats) {
+  const list = $('opponent-stats-list');
+  list.replaceChildren();
+  if (!stats.length) {
+    const empty = document.createElement('p');
+    empty.className = 'opponent-stats-empty';
+    empty.textContent = 'オンライン対戦をすると、相手ごとの勝率やプレイ時間が表示されます。';
+    list.append(empty);
+    return;
+  }
+  for (const statsForOpponent of stats) {
+    const card = document.createElement('article');
+    card.className = 'opponent-card';
+    const heading = document.createElement('div');
+    heading.className = 'opponent-card-heading';
+    const name = document.createElement('h3');
+    name.textContent = `vs ${statsForOpponent.opponent.nickname}`;
+    const rate = document.createElement('strong');
+    rate.textContent = `勝率 ${formatJapaneseWinRate(statsForOpponent.winRate)}`;
+    rate.title = `${(statsForOpponent.winRate * 100).toFixed(1)}%`;
+    heading.append(name, rate);
+
+    const meter = document.createElement('div');
+    meter.className = 'win-rate-meter';
+    meter.setAttribute('role', 'meter');
+    meter.setAttribute('aria-label', `${statsForOpponent.opponent.nickname}との勝率`);
+    meter.setAttribute('aria-valuemin', '0');
+    meter.setAttribute('aria-valuemax', '100');
+    meter.setAttribute('aria-valuenow', String(Math.round(statsForOpponent.winRate * 100)));
+    const fill = document.createElement('i');
+    fill.style.width = `${statsForOpponent.winRate * 100}%`;
+    meter.append(fill);
+
+    const facts = document.createElement('dl');
+    for (const [label, value] of [
+      ['プレイ回数', `${statsForOpponent.games}回`],
+      [
+        '戦績',
+        `${statsForOpponent.wins}勝 ${statsForOpponent.losses}敗 ${statsForOpponent.draws}分`
+      ],
+      ['ゲーム時間', `合計 ${formatPlayTime(statsForOpponent.totalDuration)}`],
+      ['平均時間', formatPlayTime(statsForOpponent.averageDuration)]
+    ]) {
+      const term = document.createElement('dt'),
+        description = document.createElement('dd');
+      term.textContent = label;
+      description.textContent = value;
+      facts.append(term, description);
+    }
+    card.append(heading, meter, facts);
+    list.append(card);
   }
 }
 $('export-button').addEventListener('click', () => {

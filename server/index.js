@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { createStore } from './store.js';
 import { resolveUser, publicUser, sessionKey, readToken, SESSION_SECONDS } from './auth.js';
-import { Matchmaker } from './matches.js';
+import { Matchmaker, summarizeOpponents } from './matches.js';
 
 const store = await createStore({ directory: process.env.DATA_DIR || 'data' });
 const app = express(),
@@ -133,8 +133,11 @@ app.get(
   wrap(async (req, res) => {
     const user = await resolveUser(store, req);
     if (!user) return res.status(401).json({ error: '名前を登録してください。' });
-    const matches = await store.list('USER#' + user.username, 'MATCH#');
-    res.json({ matches: matches.map(({ pk, sk, ...match }) => match) });
+    const allMatches = await store.list('USER#' + user.username, 'MATCH#', null);
+    res.json({
+      matches: allMatches.slice(0, 20).map(({ pk, sk, ...match }) => match),
+      opponentStats: summarizeOpponents(allMatches, user.username)
+    });
   })
 );
 app.use('/shared', express.static(fileURLToPath(new URL('../shared', import.meta.url))));

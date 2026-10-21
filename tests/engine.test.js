@@ -66,6 +66,44 @@ test('今置いたブロックと無関係な同色グループは突然まと�
   assert.equal(game.board.flat().filter((cell) => cell === 2).length, 4);
   assert.equal(game.board.flat().filter((cell) => cell === 1).length, 0);
 });
+test('消去後は全列の内部空洞を詰め、ブロックが盤面内に浮かない', () => {
+  const board = emptyBoard();
+  board[HEIGHT - 1].splice(0, 2, 1, 1);
+  board[HEIGHT - 2].splice(0, 2, 1, 1);
+  board[HEIGHT - 1][WIDTH - 1] = 3;
+  board[HEIGHT - 3][WIDTH - 1] = 4;
+
+  const result = clearColors(board, [
+    [0, HEIGHT - 1],
+    [1, HEIGHT - 1],
+    [0, HEIGHT - 2],
+    [1, HEIGHT - 2]
+  ]);
+
+  assert.equal(result.count, 4);
+  assert.equal(result.board[HEIGHT - 1][WIDTH - 1], 3);
+  assert.equal(result.board[HEIGHT - 2][WIDTH - 1], 4);
+  assert.ok(result.board.slice(0, HEIGHT - 2).every((row) => row[WIDTH - 1] === 0));
+});
+test('隣接お邪魔の消去で動いていない別グループを巻き込まない', () => {
+  const board = emptyBoard();
+  board[HEIGHT - 2].splice(0, 2, 1, 1);
+  board[HEIGHT - 3].splice(0, 2, 1, 1);
+  board[HEIGHT - 2][2] = 8;
+  board[HEIGHT - 1].splice(2, 4, 2, 2, 2, 2);
+
+  const result = clearColors(board, [
+    [0, HEIGHT - 2],
+    [1, HEIGHT - 2],
+    [0, HEIGHT - 3],
+    [1, HEIGHT - 3]
+  ]);
+
+  assert.equal(result.count, 4);
+  assert.equal(result.chains, 1);
+  assert.equal(result.board.flat().filter((cell) => cell === 8).length, 0);
+  assert.equal(result.board.flat().filter((cell) => cell === 2).length, 4);
+});
 test('同じseedは同じブロックを生成し、左右の壁を越えない', () => {
   const a = new Game(42),
     b = new Game(42);

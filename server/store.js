@@ -35,20 +35,25 @@ export async function createStore({ directory = 'data', table = process.env.DYNA
         await client.send(new DeleteCommand({ TableName: table, Key: { pk, sk } }));
       },
       async list(pk, prefix, limit = 20) {
-        return (
-          (
-            await client.send(
-              new QueryCommand({
-                TableName: table,
-                KeyConditionExpression: 'pk = :pk AND begins_with(sk, :prefix)',
-                ExpressionAttributeValues: { ':pk': pk, ':prefix': prefix },
-                ScanIndexForward: false,
-                Limit: limit,
-                ConsistentRead: true
-              })
-            )
-          ).Items || []
-        );
+        const items = [];
+        let exclusiveStartKey;
+        do {
+          const remaining = limit === null ? undefined : limit - items.length;
+          const response = await client.send(
+            new QueryCommand({
+              TableName: table,
+              KeyConditionExpression: 'pk = :pk AND begins_with(sk, :prefix)',
+              ExpressionAttributeValues: { ':pk': pk, ':prefix': prefix },
+              ScanIndexForward: false,
+              ...(remaining === undefined ? {} : { Limit: remaining }),
+              ...(exclusiveStartKey ? { ExclusiveStartKey: exclusiveStartKey } : {}),
+              ConsistentRead: true
+            })
+          );
+          items.push(...(response.Items || []));
+          exclusiveStartKey = response.LastEvaluatedKey;
+        } while (exclusiveStartKey && (limit === null || items.length < limit));
+        return items;
       }
     };
   }
@@ -94,11 +99,12 @@ export async function createStore({ directory = 'data', table = process.env.DYNA
     },
     async list(pk, prefix, limit = 20) {
       await pending;
-      return Object.values(rows)
+      const matches = Object.values(rows)
         .filter((row) => row.pk === pk && row.sk.startsWith(prefix))
-        .sort((a, b) => b.sk.localeCompare(a.sk))
-        .slice(0, limit)
-        .map((row) => structuredClone(row));
+        .sort((a, b) => b.sk.localeCompare(a.sk));
+      return (limit === null ? matches : matches.slice(0, limit)).map((row) =>
+        structuredClone(row)
+      );
     }
   };
 }

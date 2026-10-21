@@ -84,7 +84,7 @@ def test_name_only_registration_and_automatic_return(client):
     assert "HttpOnly" in headers["Set-Cookie"]
     assert "SameSite=Strict" in headers["Set-Cookie"]
     assert client("me")[1]["user"] == user
-    assert client("history")[1] == {"matches": []}
+    assert client("history")[1] == {"matches": [], "opponentStats": []}
 
 
 def test_rename_preserves_identity(client):

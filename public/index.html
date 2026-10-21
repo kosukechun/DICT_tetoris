@@ -230,6 +230,16 @@
           <button class="small-button back-home">ホームへ戻る</button>
         </div>
         <p class="subtle">直近20試合。ログはサーバーに保存されます。</p>
+        <section class="opponent-stats" aria-labelledby="opponent-stats-title">
+          <div class="opponent-stats-heading">
+            <div>
+              <span class="eyebrow">HEAD-TO-HEAD</span>
+              <h2 id="opponent-stats-title">相手別戦績</h2>
+            </div>
+            <p>保存済みのオンライン対戦を相手ごとに集計</p>
+          </div>
+          <div id="opponent-stats-list" class="opponent-stats-list"></div>
+        </section>
         <div id="history-list"></div>
         <button id="export-button" class="secondary-button">履歴をJSONでダウンロード</button>
       </section>

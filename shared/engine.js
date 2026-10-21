@@ -114,7 +114,9 @@ export function clearColors(board, triggerCells = null) {
     chains++;
     count += cleared.length;
     const affectedColumns = new Set();
-    // Adjacent garbage disappears with a color group.
+    const garbage = new Set();
+    // Adjacent garbage disappears with a color group. Collect it first so the
+    // result does not depend on the order in which cleared cells are visited.
     for (const [x, y] of cleared) {
       board[y][x] = 0;
       affectedColumns.add(x);
@@ -124,21 +126,33 @@ export function clearColors(board, triggerCells = null) {
         [x, y - 1],
         [x, y + 1]
       ])
-        if (board[ny]?.[nx] === 8) {
-          board[ny][nx] = 0;
-          affectedColumns.add(nx);
-        }
+        if (board[ny]?.[nx] === 8) garbage.add(ny * WIDTH + nx);
     }
-    for (const x of affectedColumns) {
-      const column = board.map((row) => row[x]).filter(Boolean);
-      for (let y = HEIGHT - 1; y >= 0; y--) board[y][x] = column.pop() || 0;
+    for (const key of garbage) {
+      const x = key % WIDTH,
+        y = Math.floor(key / WIDTH);
+      board[y][x] = 0;
+      affectedColumns.add(x);
     }
-    if (targeted) {
-      active = new Set();
-      for (const x of affectedColumns)
-        for (let y = 0; y < HEIGHT; y++)
-          if (board[y][x] && board[y][x] !== 8) active.add(y * WIDTH + x);
+
+    const moved = new Set();
+    // A tetromino can leave supported overhangs in columns that were not part
+    // of the clear. Compact every column after a clear so no block remains
+    // suspended inside the board. Only blocks that actually moved in a column
+    // touched by this clear may trigger the next chain.
+    for (let x = 0; x < WIDTH; x++) {
+      const column = [];
+      for (let y = HEIGHT - 1; y >= 0; y--)
+        if (board[y][x]) column.push({ value: board[y][x], oldY: y });
+      for (let y = 0; y < HEIGHT; y++) board[y][x] = 0;
+      column.forEach(({ value, oldY }, index) => {
+        const newY = HEIGHT - 1 - index;
+        board[newY][x] = value;
+        if (targeted && affectedColumns.has(x) && value !== 8 && oldY !== newY)
+          moved.add(newY * WIDTH + x);
+      });
     }
+    if (targeted) active = moved;
   }
   return { board, count, chains };
 }

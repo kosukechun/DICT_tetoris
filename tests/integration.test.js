@@ -159,6 +159,12 @@ test('名前登録・同時対戦・勝敗・ログの再起動後永続化', { 
   const persisted = (await readHistory(a)).matches;
   assert.equal(persisted.length, 2);
   assert.ok(persisted.some((match) => match.id === first.id));
+  const headToHead = (await readHistory(a)).opponentStats;
+  assert.equal(headToHead.length, 1);
+  assert.equal(headToHead[0].opponent.username, first.players[1 - first.seat].username);
+  assert.equal(headToHead[0].games, 1);
+  assert.equal(headToHead[0].losses, 1);
+  assert.equal(headToHead[0].winRate, 0);
   const store = await createStore({ directory });
   const me = await fetch(base + '/api/me', { headers: { Cookie: a } }).then((r) => r.json());
   const player = await store.get('USER#' + me.user.username, 'PROFILE');

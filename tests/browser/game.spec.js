@@ -82,6 +82,44 @@ test('ホーム→登録→CPU対戦→操作→結果→履歴', async ({ page 
   expect(errors).toEqual([]);
 });
 
+test('対戦履歴に相手別の勝率・回数・ゲーム時間を表示する', async ({ page }) => {
+  await page.goto('/');
+  await page.locator('#account-button').click();
+  await page.locator('[name=nickname]').fill('戦績テスト');
+  await page.locator('#auth-submit').click();
+  await page.route('**/api/history', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        matches: [],
+        opponentStats: [
+          {
+            opponent: { username: 'rival', nickname: 'ライバル' },
+            games: 3,
+            wins: 2,
+            losses: 1,
+            draws: 0,
+            totalDuration: 375_000,
+            averageDuration: 125_000,
+            winRate: 2 / 3,
+            latestAt: '2026-10-21T12:00:00.000Z'
+          }
+        ]
+      })
+    })
+  );
+
+  await page.locator('#history-nav').click();
+  const card = page.locator('.opponent-card');
+  await expect(card).toHaveCount(1);
+  await expect(card).toContainText('vs ライバル');
+  await expect(card).toContainText('勝率 6割7分');
+  await expect(card).toContainText('3回');
+  await expect(card).toContainText('2勝 1敗 0分');
+  await expect(card).toContainText('合計 6分15秒');
+  await expect(card).toContainText('2分5秒');
+});
+
 async function mockBattle(page) {
   const games = [new Game(7), new Game(7)];
   const actions = [];

@@ -28,11 +28,9 @@
         ><button id="account-button" class="small-button">名前を登録</button>
       </div>
     </header>
+    <p id="availability-notice" class="availability-notice" role="status" hidden></p>
     <main>
       <section id="home-view" class="view">
-        <button id="cheat-button" class="cheat-toggle" type="button" aria-pressed="false">
-          <small>CHEAT MODE</small><b>OFF</b>
-        </button>
         <div class="hero">
           <div class="hero-copy">
             <div class="eyebrow"><span></span> CONNECT. STACK. CHAIN.</div>
@@ -42,6 +40,19 @@
             </p>
             <div class="hero-tags">
               <span>オンライン対戦</span><span>4色の連鎖</span><span>CPU 3 LEVELS</span>
+            </div>
+            <div class="cheat-controls" aria-label="チートモード">
+              <button id="cheat-button" class="cheat-toggle" type="button" aria-pressed="false">
+                <small>CHEAT MODE</small><b>OFF</b>
+              </button>
+              <button
+                id="admin-cheat-button"
+                class="cheat-toggle"
+                type="button"
+                aria-pressed="false"
+              >
+                <small>ADMIN CHEAT</small><b>OFF</b>
+              </button>
             </div>
           </div>
           <div class="hero-art">
@@ -73,8 +84,8 @@
             <div class="mode-symbol">↗</div>
             <h3>オンラインバトル</h3>
             <p>同じURLに集まって、リアルタイム対戦。<br />連鎖でお邪魔ブロックを送り込もう。</p>
-            <button id="online-button" class="primary-button">対戦相手を探す <span>→</span></button
-            ><small>登録しているプレーヤー同士でマッチング</small>
+            <button id="online-button" class="primary-button">対戦相手を探す <span>→</span></button>
+            <small>登録しているプレーヤー同士でマッチング</small>
           </article>
           <article class="mode-card cpu-card">
             <span class="card-number">02 / SINGLE PLAYER</span>
@@ -99,6 +110,17 @@
             </fieldset>
             <button id="cpu-button" class="secondary-button">CPUと対戦する <span>→</span></button>
           </article>
+          <article class="mode-card tournament-card">
+            <span class="card-number">03 / TOURNAMENT</span>
+            <div class="mode-symbol">♜</div>
+            <h3>トーナメント</h3>
+            <p>3〜8人で、優勝を目指そう。<br />部屋コードで集合。シードは自動抽選。</p>
+            <div class="tournament-facts"><span>3〜8人</span><span>シード対応</span></div>
+            <button id="tournament-button" class="secondary-button">
+              部屋を作る・参加 <span>→</span>
+            </button>
+            <small>主催者が部屋を作って大会を開始</small>
+          </article>
         </div>
         <div class="feature-strip">
           <div>
@@ -111,6 +133,27 @@
           </div>
           <a href="#guide">ルールをチェック <span>↗</span></a>
         </div>
+      </section>
+
+      <section id="tournament-view" class="view" hidden>
+        <div class="section-heading">
+          <div>
+            <span class="eyebrow">TOURNAMENT ROOM</span>
+            <h1>トーナメント</h1>
+          </div>
+          <button id="room-leave" class="small-button">部屋を退出</button>
+        </div>
+        <div class="room-summary">
+          <p>部屋コード <strong id="room-code"></strong></p>
+          <p id="room-status" role="status" aria-live="polite"></p>
+          <p class="subtle">
+            部屋コードを参加者に伝えてください。組み合わせとシードは開始時に抽選します。
+          </p>
+          <ul id="room-members" class="room-members"></ul>
+          <button id="room-start" class="primary-button" hidden>大会を開始する →</button>
+          <button id="room-ready" class="primary-button" hidden>次の試合の準備完了 →</button>
+        </div>
+        <div id="room-bracket" class="room-bracket" aria-label="トーナメント表"></div>
       </section>
 
       <section id="game-view" class="view" hidden>
@@ -267,7 +310,11 @@
               連続で消すとコンボが加算され、2コンボごとに攻撃が1個増えます。Fキーのシールドは1試合に一度。待機中のお邪魔を最大4個消し、5秒間、攻撃1回ごとに最大4個を防ぎます。
             </p>
             <p>
-              ホーム右端のチートモードをパスワードでONにすると、対戦中は5秒ごとに相手へお邪魔を2個送ります。CPU戦とオンライン対戦の両方で使えます。
+              ホームのチートモードをパスワードでONにすると、対戦中は5秒ごとに相手へお邪魔を2個送ります。CPU戦とオンライン対戦の両方で使えます。
+            </p>
+            <p>
+              ホームのADMIN
+              CHEATは5秒ごとに自分の盤面を最大3個消し、相手へお邪魔を2個送ります。通常チートとは別のパスワードでONにします。
             </p>
             <p>
               予告から1.2秒以上たった後、消去しなかった着地でお邪魔が降り始めます。予告も1回の落下も最大6個です。1個ずつ約0.2秒間隔で落とします。相殺すると、盤面に打ち消した数と残りの予告を0.25秒表示します。
@@ -297,6 +344,12 @@
               CPUは EASY / NORMAL / HARD
               の3段階。接続切れや途中終了は敗北扱いです。再接続による試合復帰には対応していません。
             </p>
+            <p>
+              トーナメントは3〜8人。主催者が部屋を作り、他の参加者は部屋コードで入ります。人数がそろうと主催者が開始でき、必要なシードは自動で抽選します。次の試合は準備完了を押してください。引き分けは再試合です。
+            </p>
+            <p>
+              ゲーム内の名前がchunのプレーヤーは、画面下の「管理者」からCPU戦・通常のオンライン戦・大会すべての禁止時間帯と即時停止を設定できます。禁止中・停止中は対戦できず、試合は引き分けで終了し、大会も中止します。
+            </p>
           </article>
         </div>
         <button class="primary-button back-home">ホームに戻って対戦する →</button>
@@ -305,7 +358,74 @@
     <footer>
       <span>DAIKIN DICT F9 テトリス · 製作者：ちゅん丸</span
       ><span>FOUR COLORS. ENDLESS POSSIBILITIES.</span><a href="#guide">操作説明 ↗</a>
+      <button id="admin-button" class="text-button" hidden>管理者</button>
     </footer>
+    <dialog id="tournament-dialog">
+      <button class="dialog-close" id="tournament-close" aria-label="閉じる">×</button>
+      <span class="eyebrow">PLAY TOGETHER</span>
+      <h2>トーナメント / 3〜8人</h2>
+      <form id="room-create-form">
+        <label
+          >参加人数<select name="capacity" aria-label="参加人数">
+            <option value="3">3人</option>
+            <option value="4" selected>4人</option>
+            <option value="5">5人</option>
+            <option value="6">6人</option>
+            <option value="7">7人</option>
+            <option value="8">8人</option>
+          </select></label
+        >
+        <button class="primary-button" type="submit">部屋を作る →</button>
+      </form>
+      <form id="room-join-form">
+        <label
+          >部屋コード<input
+            name="code"
+            maxlength="6"
+            minlength="6"
+            pattern="[0-9a-fA-F]{6}"
+            required
+            autocomplete="off"
+            placeholder="6文字の部屋コード"
+        /></label>
+        <button class="secondary-button" type="submit">部屋に参加する →</button>
+      </form>
+      <p id="room-error" class="form-error" role="alert"></p>
+    </dialog>
+    <dialog id="admin-dialog">
+      <button class="dialog-close" id="admin-close" aria-label="閉じる">×</button>
+      <span class="eyebrow">ADMIN</span>
+      <h2>管理者設定</h2>
+      <p id="admin-name-notice" class="subtle">ゲーム内の名前がchunのプレーヤーが管理できます。</p>
+      <div id="admin-controls" hidden>
+        <section class="admin-stop-controls">
+          <h3>ゲーム全体の停止・再開</h3>
+          <p id="admin-play-status" role="status" aria-live="polite"></p>
+          <p class="subtle">
+            CPU戦・通常のオンライン戦・トーナメントのすべてに適用します。停止すると試合は引き分けで終了し、大会と待機も中止します。
+          </p>
+          <div class="admin-stop-buttons">
+            <button id="admin-stop-button" class="primary-button">ゲームを今すぐ停止</button>
+            <button id="admin-resume-button" class="secondary-button">即時停止を解除</button>
+          </div>
+        </section>
+        <form id="admin-schedule-form">
+          <h3>全ゲームの禁止時間帯（毎日・日本時間）</h3>
+          <label class="checkbox-label"
+            ><input name="enabled" type="checkbox" />時間制限を有効にする</label
+          >
+          <div class="schedule-times">
+            <label>開始<input name="start" type="time" value="22:00" required /></label>
+            <label>終了<input name="end" type="time" value="06:00" required /></label>
+          </div>
+          <p class="subtle">
+            禁止時間になると進行中の試合は引き分けで終了し、大会も中止します。日付をまたぐ設定もできます。
+          </p>
+          <button class="primary-button" type="submit">時間帯を保存する →</button>
+        </form>
+      </div>
+      <p id="admin-error" class="form-error" role="alert"></p>
+    </dialog>
     <dialog id="auth-dialog">
       <button class="dialog-close" id="auth-close" aria-label="閉じる">×</button
       ><span class="eyebrow">PLAYER ENTRY</span>
@@ -359,6 +479,7 @@
       <p id="save-status" class="subtle" aria-live="polite">対戦ログを保存しています…</p>
       <button id="result-home" class="primary-button">ホームへ戻る →</button
       ><button id="result-history" class="text-button">対戦履歴を見る</button>
+      <button id="result-room" class="secondary-button" hidden>大会の部屋に戻る →</button>
     </dialog>
     <dialog id="confirm-dialog">
       <h2>対戦を終了しますか？</h2>

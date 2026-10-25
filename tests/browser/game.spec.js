@@ -23,6 +23,20 @@ test('チートモードはパスワードをサーバーで確認してON/OFF�
   await page.locator('#cheat-button').click();
   await expect(page.locator('#cheat-button')).toHaveAttribute('aria-pressed', 'false');
   await expect(page.locator('#cheat-button b')).toHaveText('OFF');
+
+  await expect(page.locator('#admin-button')).toBeHidden();
+  await page.locator('#admin-cheat-button').click();
+  await page.locator('#cheat-form [name=password]').fill('tomo');
+  await page.locator('#cheat-submit').click();
+  await expect(page.locator('#cheat-error')).toHaveText('パスワードが違います。');
+  await page.locator('#cheat-form [name=password]').fill('chun');
+  await page.locator('#cheat-submit').click();
+  await expect(page.locator('#cheat-dialog')).toBeHidden();
+  await expect(page.locator('#admin-cheat-button')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('#cheat-button')).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.locator('#admin-button')).toBeHidden();
+  await page.locator('#admin-cheat-button').click();
+  await expect(page.locator('#admin-cheat-button')).toHaveAttribute('aria-pressed', 'false');
 });
 
 test('ホーム→登録→CPU対戦→操作→結果→履歴', async ({ page }, testInfo) => {
@@ -31,6 +45,9 @@ test('ホーム→登録→CPU対戦→操作→結果→履歴', async ({ page 
   await page.goto('/');
   await expect(page).toHaveTitle('DAIKIN DICT F9 テトリス');
   await expect(page.locator('.mascot-disc img')).toBeVisible();
+  await expect(page.locator('.mode-grid > .mode-card')).toHaveCount(3);
+  await expect(page.locator('.tournament-card #tournament-button')).toBeVisible();
+  await expect(page.locator('.online-card #tournament-button')).toHaveCount(0);
   expect(await page.locator('body').evaluate((el) => el.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: `test-results/${testInfo.project.name}-home.png`, fullPage: true });
   await page.locator('#cpu-button').click();
@@ -121,6 +138,13 @@ test('対戦履歴に相手別の勝率・回数・ゲーム時間を表示す�
 });
 
 async function mockBattle(page) {
+  // These tests isolate input/rendering; registration is covered by real battles.
+  await page.route('**/api/register', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ user: { username: 'mock-player', nickname: 'テストプレーヤー' } })
+    })
+  );
   const games = [new Game(7), new Game(7)];
   const actions = [];
   let battleSocket;
@@ -292,4 +316,212 @@ test('相殺した数と予告の変化を大きく表示し、同じ通知を�
   expect(duration).toBeLessThanOrEqual(300);
   sendState();
   await expect(notice).toBeHidden();
+});
+
+test('3人で部屋に参加し、シードから決勝・優勝まで操作できる', async ({
+  browser,
+  page
+}, testInfo) => {
+  const contexts = [await browser.newContext(), await browser.newContext()];
+  const pages = [page, await contexts[0].newPage(), await contexts[1].newPage()];
+  const errors = [];
+  pages.forEach((participant) =>
+    participant.on('pageerror', (error) => errors.push(error.message))
+  );
+  try {
+    for (const [index, participant] of pages.entries()) {
+      await participant.goto('/');
+      await participant.locator('#tournament-button').click();
+      await participant.locator('[name=nickname]').fill(`大会参加者${index + 1}`);
+      await participant.locator('#auth-submit').click();
+      await expect(participant.locator('#tournament-dialog')).toBeVisible();
+    }
+    await page.locator('[name=capacity]').selectOption('3');
+    await page.locator('#room-create-form button').click();
+    await expect(page.locator('#tournament-view')).toBeVisible();
+    const code = await page.locator('#room-code').textContent();
+    for (const participant of pages.slice(1)) {
+      await participant.locator('[name=code]').fill(code);
+      await participant.locator('#room-join-form button').click();
+      await expect(participant.locator('#tournament-view')).toBeVisible();
+    }
+    await expect(page.locator('#room-start')).toBeEnabled();
+    await page.locator('#room-start').click();
+    await expect
+      .poll(
+        async () =>
+          (
+            await Promise.all(
+              pages.map((participant) => participant.locator('#game-view').isVisible())
+            )
+          ).filter(Boolean).length
+      )
+      .toBe(2);
+    const firstPlayers = [];
+    for (const participant of pages)
+      if (await participant.locator('#game-view').isVisible()) firstPlayers.push(participant);
+    await firstPlayers[0].locator('#forfeit-button').click();
+    await firstPlayers[0].locator('#confirm-forfeit').click();
+    for (const participant of firstPlayers) {
+      await expect(participant.locator('#result-dialog')).toBeVisible();
+      await participant.locator('#result-room').click();
+    }
+    const finalists = [];
+    for (const participant of pages)
+      if (
+        (await participant.locator('#room-ready').isVisible()) &&
+        (await participant.locator('#room-ready').isEnabled())
+      )
+        finalists.push(participant);
+    // The seed may already be marked ready from the opening round.
+    for (const participant of finalists) await participant.locator('#room-ready').click();
+    await expect
+      .poll(
+        async () =>
+          (
+            await Promise.all(
+              pages.map((participant) => participant.locator('#game-view').isVisible())
+            )
+          ).filter(Boolean).length
+      )
+      .toBe(2);
+    const finalPlayers = [];
+    for (const participant of pages)
+      if (await participant.locator('#game-view').isVisible()) finalPlayers.push(participant);
+    await finalPlayers[0].locator('#forfeit-button').click();
+    await finalPlayers[0].locator('#confirm-forfeit').click();
+    for (const participant of finalPlayers) {
+      await expect(participant.locator('#result-dialog')).toBeVisible();
+      await participant.locator('#result-room').click();
+    }
+    await expect(page.locator('#room-status')).toContainText('優勝：');
+    await expect(page.locator('.bracket-match')).toHaveCount(3);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true
+    );
+    await page.screenshot({
+      path: `test-results/${testInfo.project.name}-tournament.png`,
+      fullPage: true
+    });
+    expect(errors).toEqual([]);
+    await page.locator('#room-leave').click();
+    await expect(page.locator('#home-view')).toBeVisible();
+  } finally {
+    await Promise.all(contexts.map((context) => context.close()));
+  }
+});
+
+test('名前chunだけが時間制限と全ゲームの即時停止・再開を操作できる', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator('#admin-button')).toBeHidden();
+  await page.locator('#account-button').click();
+  await page.locator('[name=nickname]').fill('管理者ではない名前');
+  await page.locator('#auth-submit').click();
+  await expect(page.locator('#admin-button')).toBeHidden();
+  await page.locator('#account-button').click();
+  await page.locator('[name=nickname]').fill('chun');
+  await page.locator('#auth-submit').click();
+  await expect(page.locator('#admin-button')).toBeVisible();
+  await page.locator('#admin-button').click();
+  await expect(page.locator('#admin-controls')).toBeVisible();
+  await page.locator('#admin-close').click();
+  await page.locator('#cpu-button').click();
+  await expect(page.locator('#game-view')).toBeVisible();
+  await page.locator('#admin-button').click();
+  const minute = Math.floor((Date.now() + 9 * 3600000) / 60000) % 1440;
+  const time = (value) =>
+    `${String(Math.floor(value / 60)).padStart(2, '0')}:${String(value % 60).padStart(2, '0')}`;
+  const form = page.locator('#admin-schedule-form');
+  await form.locator('[name=start]').fill(time((minute + 1439) % 1440));
+  await form.locator('[name=end]').fill(time((minute + 5) % 1440));
+  await form.locator('[name=enabled]').check();
+  await form.locator('button').click();
+  await expect(page.locator('#result-dialog')).toBeVisible();
+  await expect(page.locator('#result-detail')).toContainText('ゲーム禁止時間帯');
+  await page.locator('#result-home').click();
+  await expect(page.locator('#availability-notice')).toBeVisible();
+  await expect(page.locator('#cpu-button')).toBeDisabled();
+  await page.locator('#admin-button').click();
+  await form.locator('[name=enabled]').uncheck();
+  await form.locator('button').click();
+  await expect(page.locator('#availability-notice')).toBeHidden();
+  await page.locator('#admin-close').click();
+  await expect(page.locator('#cpu-button')).toBeEnabled();
+  await page.locator('#cpu-button').click();
+  await expect(page.locator('#game-view')).toBeVisible();
+  await page.locator('#admin-button').click();
+  await page.locator('#admin-stop-button').click();
+  await expect(page.locator('#result-dialog')).toBeVisible();
+  await expect(page.locator('#result-detail')).toContainText('管理者によるゲーム停止');
+  await page.locator('#result-home').click();
+  await expect(page.locator('#cpu-button')).toBeDisabled();
+  await expect(page.locator('#availability-notice')).toContainText('停止');
+  await page.reload();
+  await expect(page.locator('#cpu-button')).toBeDisabled();
+  await page.locator('#admin-button').click();
+  await page.locator('#admin-resume-button').click();
+  await expect(page.locator('#availability-notice')).toBeHidden();
+  await expect(page.locator('#cpu-button')).toBeEnabled();
+  await page.locator('#admin-close').click();
+  await page.locator('#account-button').click();
+  await page.locator('[name=nickname]').fill('管理者を終了');
+  await page.locator('#auth-submit').click();
+  await expect(page.locator('#admin-button')).toBeHidden();
+});
+
+test('消去したマスだけに短い演出を表示し、同じ状態通知で再表示しない', async ({
+  page
+}, testInfo) => {
+  const { games, sendState, actions } = await mockBattle(page);
+  const game = games[0];
+  game.matrix = [
+    [1, 1],
+    [1, 1]
+  ];
+  game.x = 0;
+  game.y = 13;
+  game.lock();
+  sendState();
+  const alpha = () =>
+    page
+      .locator('#self-board')
+      .evaluate(
+        (canvas) =>
+          canvas.getContext('2d').getImageData(30, Math.floor((13 * canvas.width) / 9 + 30), 1, 1)
+            .data[3]
+      );
+  await expect.poll(alpha, { intervals: [10], timeout: 1000 }).toBeGreaterThan(0);
+  await page
+    .locator('#self-board')
+    .screenshot({ path: `test-results/${testInfo.project.name}-clear-effect.png` });
+  await page.keyboard.press('ArrowLeft');
+  expect(actions).toContain('left');
+  await page.waitForTimeout(360);
+  expect(await alpha()).toBe(0);
+  sendState();
+  await page.waitForTimeout(40);
+  expect(await alpha()).toBe(0);
+});
+
+test('対戦へ未接続のホームでも禁止時間の終了を自動反映する', async ({ page }) => {
+  await page.clock.install();
+  const availability = { enabled: true, start: '22:00', end: '06:00', timezone: 'Asia/Tokyo' };
+  await page.route('**/api/me', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ user: null, availability: { ...availability, blocked: true } })
+    })
+  );
+  await page.route('**/api/availability', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ ...availability, blocked: false })
+    })
+  );
+  await page.goto('/');
+  await expect(page.locator('#cpu-button')).toBeDisabled();
+  await expect(page.locator('#availability-notice')).toBeVisible();
+  await page.clock.fastForward(15000);
+  await expect(page.locator('#cpu-button')).toBeEnabled();
+  await expect(page.locator('#availability-notice')).toBeHidden();
 });

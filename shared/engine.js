@@ -7,6 +7,7 @@ export const GARBAGE_WARNING_MS = 1200;
 export const GARBAGE_FALL_MS = 150;
 export const GARBAGE_GAP_MS = 50;
 export const CANCELLATION_FEEDBACK_MS = 250;
+export const CLEAR_FEEDBACK_MS = 300;
 // Keep automatic gravity stable for the whole match. Player-controlled soft drop
 // remains faster, but elapsed time must never make pieces uncontrollably fast.
 export const GRAVITY_INTERVAL_MS = 650;
@@ -73,6 +74,7 @@ export function clearColors(board, triggerCells = null) {
   board = board.map((row) => [...row]);
   let count = 0,
     chains = 0;
+  const waves = [];
   const targeted = triggerCells !== null;
   let active = targeted ? new Set(triggerCells.map(([x, y]) => y * WIDTH + x)) : null;
   while (true) {
@@ -113,13 +115,12 @@ export function clearColors(board, triggerCells = null) {
     if (!cleared.length) break;
     chains++;
     count += cleared.length;
-    const affectedColumns = new Set();
     const garbage = new Set();
+    const cells = cleared.map(([x, y]) => [x, y, board[y][x]]);
     // Adjacent garbage disappears with a color group. Collect it first so the
     // result does not depend on the order in which cleared cells are visited.
     for (const [x, y] of cleared) {
       board[y][x] = 0;
-      affectedColumns.add(x);
       for (const [nx, ny] of [
         [x - 1, y],
         [x + 1, y],
@@ -131,30 +132,30 @@ export function clearColors(board, triggerCells = null) {
     for (const key of garbage) {
       const x = key % WIDTH,
         y = Math.floor(key / WIDTH);
+      cells.push([x, y, 8]);
       board[y][x] = 0;
-      affectedColumns.add(x);
     }
-
-    const moved = new Set();
-    // A tetromino can leave supported overhangs in columns that were not part
-    // of the clear. Compact every column after a clear so no block remains
-    // suspended inside the board. Only blocks that actually moved in a column
-    // touched by this clear may trigger the next chain.
-    for (let x = 0; x < WIDTH; x++) {
-      const column = [];
-      for (let y = HEIGHT - 1; y >= 0; y--)
-        if (board[y][x]) column.push({ value: board[y][x], oldY: y });
-      for (let y = 0; y < HEIGHT; y++) board[y][x] = 0;
-      column.forEach(({ value, oldY }, index) => {
-        const newY = HEIGHT - 1 - index;
-        board[newY][x] = value;
-        if (targeted && affectedColumns.has(x) && value !== 8 && oldY !== newY)
-          moved.add(newY * WIDTH + x);
-      });
-    }
-    if (targeted) active = moved;
+    waves.push(cells);
+    // Every falling color can form a chain, including columns outside the clear.
+    const moved = settleBoard(board);
+    if (targeted) active = new Set(moved.map(([x, y]) => y * WIDTH + x));
   }
-  return { board, count, chains };
+  return { board, count, chains, waves };
+}
+export function settleBoard(board) {
+  const moved = [];
+  for (let x = 0; x < WIDTH; x++) {
+    const column = [];
+    for (let y = HEIGHT - 1; y >= 0; y--)
+      if (board[y][x]) column.push({ value: board[y][x], oldY: y });
+    for (let y = 0; y < HEIGHT; y++) board[y][x] = 0;
+    column.forEach(({ value, oldY }, index) => {
+      const newY = HEIGHT - 1 - index;
+      board[newY][x] = value;
+      if (value !== 8 && oldY !== newY) moved.push([x, newY]);
+    });
+  }
+  return moved;
 }
 export class Game {
   constructor(seed = 1, rule = 'colors') {
@@ -184,6 +185,10 @@ export class Game {
     this.gravity = 0;
     this.pieces = 0;
     this.lastClear = 0;
+    this.lastChains = 0;
+    this.clearSerial = 0;
+    this.clearEffect = null;
+    this.adminRemovals = 0;
     this.bufferedRotations = 0;
     this.onAttack = () => {};
     this.onEvent = () => {};
@@ -294,6 +299,10 @@ export class Game {
     if (blocked) this.onEvent('blocked', { rows: blocked });
   }
   lock() {
+    if (this.matrix.some((row, dy) => row.some((cell) => cell && this.y + dy < 0))) {
+      this.over = true;
+      return;
+    }
     const lockedCells = [];
     this.matrix.forEach((row, dy) =>
       row.forEach((cell, dx) => {
@@ -307,6 +316,9 @@ export class Game {
       this.rule === 'colors' ? clearColors(this.board, lockedCells) : clearLines(this.board);
     this.board = cleared.board;
     this.lastClear = cleared.count;
+    this.lastChains = cleared.chains;
+    if (cleared.count)
+      this.showClear(cleared.waves?.flat() || lockedCells.map(([x, y]) => [x, y, 1]));
     this.pieces++;
     if (cleared.count) {
       this.combo++;
@@ -356,6 +368,43 @@ export class Game {
       }
     }
     this.spawn();
+    if (this.adminRemovals) {
+      const count = this.adminRemovals;
+      this.adminRemovals = 0;
+      this.removeBlocks(count);
+    }
+  }
+  showClear(cells) {
+    this.clearEffect = { id: ++this.clearSerial, cells };
+  }
+  removeBlocks(count = 3) {
+    if (this.over) return 0;
+    // Never invalidate an airborne garbage block's stored landing position.
+    if (this.garbageActive) {
+      this.adminRemovals += count;
+      return 0;
+    }
+    const removed = [];
+    for (let y = 0; y < HEIGHT && removed.length < count; y++)
+      for (let x = 0; x < WIDTH && removed.length < count; x++)
+        if (this.board[y][x]) {
+          removed.push([x, y, this.board[y][x]]);
+          this.board[y][x] = 0;
+        }
+    if (!removed.length) return 0;
+    const moved = settleBoard(this.board);
+    const cleared = clearColors(this.board, moved);
+    this.board = cleared.board;
+    this.showClear([...removed, ...cleared.waves.flat()]);
+    // A falling piece can be inside an overhang. Keep it in a legal position.
+    while (this.y > 0 && !fits(this.board, this.matrix, this.x, this.y)) this.y--;
+    if (!fits(this.board, this.matrix, this.x, this.y)) this.over = true;
+    this.onEvent('admin_clear', {
+      count: removed.length,
+      chained: cleared.count,
+      chains: cleared.chains
+    });
+    return removed.length;
   }
   tickGarbage(ms) {
     // One visible block at a time. Pending includes the airborne block until landing.
@@ -363,6 +412,11 @@ export class Game {
       this.fallingGarbage = null;
       this.garbageActive = false;
       this.spawn();
+      if (this.adminRemovals) {
+        const count = this.adminRemovals;
+        this.adminRemovals = 0;
+        this.removeBlocks(count);
+      }
       return;
     }
     if (this.fallingGarbage) {
@@ -408,7 +462,9 @@ export class Game {
       shieldMs: this.shieldMs,
       over: this.over,
       pieces: this.pieces,
-      lastClear: this.lastClear
+      lastClear: this.lastClear,
+      lastChains: this.lastChains,
+      clearEffect: this.clearEffect
     };
   }
 }

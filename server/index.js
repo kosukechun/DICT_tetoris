@@ -5,9 +5,12 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { createStore } from './store.js';
 import { resolveUser, publicUser, sessionKey, readToken, SESSION_SECONDS } from './auth.js';
-import { Matchmaker, summarizeOpponents } from './matches.js';
+import { Matchmaker, summarizeOpponents, isAdmin } from './matches.js';
+import { PlayAccess } from './access.js';
 
 const store = await createStore({ directory: process.env.DATA_DIR || 'data' });
+const access = new PlayAccess(store);
+await access.load();
 const app = express(),
   server = createServer(app);
 const production = process.env.NODE_ENV === 'production';
@@ -63,6 +66,7 @@ app.use('/api', (req, res, next) => {
   res.set('Cache-Control', 'no-store');
   next();
 });
+app.get('/api/availability', (req, res) => res.json(access.status()));
 const setSessionCookie = (res, token, maxAge = SESSION_SECONDS * 1000) =>
   res.cookie('session', token, {
     httpOnly: true,
@@ -95,8 +99,10 @@ app.post(
     const existing = await resolveUser(store, req);
     const username = existing?.username || randomUUID();
     const client = existing && matchmaker.clients.get(username);
-    if (client?.match || client?.queued)
-      return res.status(409).json({ error: '対戦・待機を終了してから名前を変更してください。' });
+    if (client?.match || client?.queued || client?.room)
+      return res
+        .status(409)
+        .json({ error: '対戦・待機・部屋を終了してから名前を変更してください。' });
     const user = {
       ...existing,
       pk: 'USER#' + username,
@@ -106,7 +112,13 @@ app.post(
       createdAt: existing?.createdAt || new Date().toISOString()
     };
     await store.put(user);
-    if (client) client.user = user;
+    if (client) {
+      client.user = user;
+      matchmaker.send(client, 'admin', {
+        authorized: isAdmin(client),
+        availability: access.status()
+      });
+    }
     await signIn(res, user, readToken(req));
   })
 );
@@ -125,7 +137,7 @@ app.get(
   '/api/me',
   wrap(async (req, res) => {
     const user = await resolveUser(store, req);
-    res.json({ user: user ? publicUser(user) : null });
+    res.json({ user: user ? publicUser(user) : null, availability: access.status() });
   })
 );
 app.get(
@@ -148,7 +160,7 @@ app.use((error, req, res, next) => {
     .status(error.status === 400 || error.status === 413 ? error.status : 500)
     .json({ error: '処理に失敗しました。しばらくしてから再試行してください。' });
 });
-const matchmaker = new Matchmaker(store);
+const matchmaker = new Matchmaker(store, { access });
 const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 });
 server.on('upgrade', (req, socket, head) => {
   if (req.url !== '/ws' || !sameOrigin(req) || !trustedOrigin(req) || stopping) {
@@ -191,6 +203,14 @@ server.on('upgrade', (req, socket, head) => {
             if (message.type === 'join') matchmaker.join(client, message.mode, message.difficulty);
             else if (message.type === 'cheat')
               matchmaker.setCheat(client, message.enabled !== false, message.password);
+            else if (message.type === 'admin_cheat')
+              matchmaker.setAdminCheat(client, message.enabled, message.password);
+            else if (message.type === 'admin_pause')
+              void matchmaker.setPaused(client, message.paused);
+            else if (message.type === 'admin_schedule')
+              void matchmaker.setSchedule(client, message.schedule);
+            else if (message.type === 'tournament')
+              matchmaker.tournament(client, message.operation, message);
             else if (message.type === 'cancel') {
               matchmaker.unqueue(client);
               matchmaker.send(client, 'canceled');
@@ -207,7 +227,10 @@ server.on('upgrade', (req, socket, head) => {
         });
         ws.on('close', () => matchmaker.remove(client));
         ws.on('error', () => {});
-        matchmaker.send(client, 'ready');
+        matchmaker.send(client, 'ready', {
+          availability: access.status(),
+          adminAuthorized: isAdmin(client)
+        });
       });
     })
     .catch((error) => {
@@ -240,6 +263,7 @@ async function shutdown() {
   const timeout = setTimeout(() => process.exit(1), 10000);
   timeout.unref();
   await matchmaker.shutdown();
+  await access.pending;
   wss.close();
   server.close(() => {
     clearTimeout(timeout);

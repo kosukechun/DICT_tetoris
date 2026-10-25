@@ -9,7 +9,7 @@
   "scripts": {
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
-    "test": "node --test --test-concurrency=1 tests/engine.test.js tests/rotation_scenarios.test.js tests/long_battle.test.js tests/match_rules.test.js tests/integration.test.js",
+    "test": "node --test --test-concurrency=1 tests/engine.test.js tests/rotation_scenarios.test.js tests/long_battle.test.js tests/match_rules.test.js tests/features.test.js tests/integration.test.js",
     "test:browser": "playwright test"
   },
   "dependencies": {

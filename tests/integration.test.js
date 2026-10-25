@@ -147,6 +147,27 @@ test('名前登録・同時対戦・勝敗・ログの再起動後永続化', { 
   assert.equal(cpu.difficulty, 'hard');
   one.ws.close();
   await once(one.ws, 'close');
+  two.send({ type: 'admin_schedule', schedule: { enabled: true, start: '22:00', end: '06:00' } });
+  assert.match((await two.next('error')).message, /名前がchun/);
+  two.send({ type: 'admin_cheat', enabled: true, password: 'tomo' });
+  assert.equal((await two.next('admin_cheat')).enabled, false);
+  two.send({ type: 'admin_cheat', enabled: true, password: 'chun' });
+  assert.equal((await two.next('admin_cheat')).enabled, true);
+  two.send({ type: 'admin_pause', paused: true });
+  assert.match((await two.next('error')).message, /名前がchun/);
+  const renamed = await post('register', { nickname: 'chun' }, b);
+  assert.equal(renamed.status, 200);
+  const renamedCookie = renamed.headers.get('set-cookie').split(';')[0];
+  assert.equal((await two.next('admin')).authorized, true);
+  two.send({ type: 'admin_schedule', schedule: { enabled: false, start: '23:00', end: '07:00' } });
+  assert.equal((await two.next('admin')).saved, true);
+  two.send({ type: 'admin_pause', paused: true });
+  assert.equal((await two.next('admin')).stopped, true);
+  const renamedAgain = await post('register', { nickname: '元の名前' }, renamedCookie);
+  assert.equal(renamedAgain.status, 200);
+  assert.equal((await two.next('admin')).authorized, false);
+  two.send({ type: 'admin_pause', paused: false });
+  assert.match((await two.next('error')).message, /名前がchun/);
   two.ws.close();
   await once(two.ws, 'close');
   // Wait for async log writes before terminating the process on Windows.
@@ -167,6 +188,18 @@ test('名前登録・同時対戦・勝敗・ログの再起動後永続化', { 
   assert.equal(headToHead[0].winRate, 0);
   const store = await createStore({ directory });
   const me = await fetch(base + '/api/me', { headers: { Cookie: a } }).then((r) => r.json());
+  assert.deepEqual(me.availability, {
+    enabled: false,
+    start: '23:00',
+    end: '07:00',
+    paused: true,
+    timezone: 'Asia/Tokyo',
+    blocked: true
+  });
+  assert.deepEqual(
+    await fetch(base + '/api/availability').then((response) => response.json()),
+    me.availability
+  );
   const player = await store.get('USER#' + me.user.username, 'PROFILE');
   assert.equal(player.nickname, 'テスト alice');
   assert.equal(player.passwordHash, undefined);

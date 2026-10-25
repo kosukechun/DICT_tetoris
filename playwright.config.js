@@ -15,6 +15,11 @@ export default defineConfig({
     command: 'node server/index.js',
     url: 'http://127.0.0.1:3198/health',
     reuseExistingServer: false,
-    env: { PORT: '3198', DATA_DIR: 'data/browser-tests', NODE_ENV: 'test', DYNAMODB_TABLE: '' }
+    env: {
+      PORT: '3198',
+      DATA_DIR: 'data/browser-tests',
+      NODE_ENV: 'test',
+      DYNAMODB_TABLE: ''
+    }
   }
 });

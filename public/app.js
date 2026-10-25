@@ -1,6 +1,6 @@
-import { fits, GARBAGE_FALL_MS, WIDTH, HEIGHT } from '/shared/engine.js';
+import { fits, GARBAGE_FALL_MS, CLEAR_FEEDBACK_MS, WIDTH, HEIGHT } from '/shared/engine.js';
 const $ = (id) => document.getElementById(id);
-const views = ['home', 'game', 'history', 'guide'];
+const views = ['home', 'game', 'history', 'guide', 'tournament'];
 const colors = [
   '#000000',
   '#00a9bd',
@@ -21,6 +21,11 @@ let queued = false,
   pendingIntent = null,
   resultId = null,
   cheatEnabled = false;
+let room = null,
+  adminAuthorized = false,
+  adminCheatEnabled = false,
+  playAvailability = null,
+  cheatKind = 'normal';
 let toastTimer, countdownTimer;
 const held = new Map();
 
@@ -44,6 +49,10 @@ function navigate(name) {
     return;
   }
   if (queued) return;
+  if (room) {
+    showView('tournament');
+    return;
+  }
   if (name === 'history') loadHistory();
   else showView(name);
 }
@@ -54,7 +63,7 @@ window.addEventListener('hashchange', () => {
 document.querySelectorAll('.back-home').forEach((button) =>
   button.addEventListener('click', () => {
     location.hash = 'home';
-    showView('home');
+    showView(room ? 'tournament' : 'home');
   })
 );
 async function api(path, data) {
@@ -74,16 +83,30 @@ async function api(path, data) {
 function updateAccount() {
   $('player-label').textContent = user ? user.nickname : 'GUEST PLAYER';
   $('account-button').textContent = user ? '名前を変更' : '名前を登録';
+  adminAuthorized = user?.nickname === 'chun';
+  updateAdmin();
 }
 function updateCheatButton() {
-  const button = $('cheat-button');
-  button.classList.toggle('is-active', cheatEnabled);
-  button.setAttribute('aria-pressed', String(cheatEnabled));
-  button.querySelector('b').textContent = cheatEnabled ? 'ON' : 'OFF';
+  for (const [id, enabled] of [
+    ['cheat-button', cheatEnabled],
+    ['admin-cheat-button', adminCheatEnabled]
+  ]) {
+    const button = $(id);
+    button.classList.toggle('is-active', enabled);
+    button.setAttribute('aria-pressed', String(enabled));
+    button.querySelector('b').textContent = enabled ? 'ON' : 'OFF';
+  }
 }
-function openCheat() {
+function openCheat(kind = 'normal') {
+  cheatKind = kind;
   $('cheat-error').textContent = '';
   $('cheat-form').reset();
+  $('cheat-dialog').querySelector('h2').textContent =
+    kind === 'admin' ? 'adminチートをONにする' : 'チートモードをONにする';
+  $('cheat-dialog').querySelector('p.subtle').textContent =
+    kind === 'admin'
+      ? '5秒ごとに自分の盤面を最大3個消し、相手へお邪魔を2個送ります。通常チートとの併用でも攻撃は2個です。'
+      : '対戦中、5秒ごとに相手へお邪魔ブロックを2個送ります。';
   $('cheat-dialog').showModal();
   $('cheat-form').elements.password.focus();
 }
@@ -92,7 +115,7 @@ function openAuth() {
   $('auth-dialog').showModal();
 }
 $('account-button').addEventListener('click', async () => {
-  if (active || queued) {
+  if (active || queued || room) {
     toast('対戦・待機を終了してから名前を変更してください。');
     return;
   }
@@ -120,6 +143,9 @@ $('auth-form').addEventListener('submit', async (event) => {
     pendingIntent = null;
     if (intent === 'history') await loadHistory();
     else if (intent === 'cheat') openCheat();
+    else if (intent === 'admin-cheat') openCheat('admin');
+    else if (intent === 'tournament') openTournament();
+    else if (intent === 'admin') openAdmin();
     else if (intent) await startBattle(intent);
   } catch (error) {
     $('auth-error').textContent = error.message;
@@ -148,6 +174,11 @@ async function connect() {
       if (message.type === 'ready') {
         ready = true;
         clearTimeout(timer);
+        updateAvailability(message.availability);
+        if (message.adminAuthorized !== undefined) {
+          adminAuthorized = message.adminAuthorized;
+          updateAdmin(message.availability);
+        }
         resolve();
       } else handleMessage(message);
     });
@@ -155,16 +186,19 @@ async function connect() {
       clearTimeout(timer);
       if (socket === ws) socket = null;
       cheatEnabled = false;
+      adminCheatEnabled = false;
+      updateAdmin();
       updateCheatButton();
       if (!ready)
         reject(
           new Error('接続できません。同じブラウザーの別タブを閉じて、もう一度お試しください。')
         );
-      if (active || queued) {
+      if (active || queued || room) {
         clearInterval(countdownTimer);
         $('countdown').textContent = '';
         clearHeld();
         active = null;
+        room = null;
         queued = false;
         $('queue-dialog').close();
         $('confirm-dialog').close();
@@ -186,7 +220,7 @@ async function startBattle(mode) {
     openAuth();
     return;
   }
-  if (active || queued) return;
+  if (active || queued || room) return;
   $('cpu-button').disabled = $('online-button').disabled = true;
   try {
     await connect();
@@ -199,26 +233,31 @@ async function startBattle(mode) {
     toast(error.message);
   } finally {
     $('cpu-button').disabled = $('online-button').disabled = false;
+    updateAvailability(playAvailability);
   }
 }
 $('online-button').addEventListener('click', () => startBattle('online'));
 $('cpu-button').addEventListener('click', () => startBattle('cpu'));
-$('cheat-button').addEventListener('click', () => {
-  if (active || queued) {
-    toast('対戦・待機を終了してからチートモードを切り替えてください。');
-    return;
-  }
-  if (!user) {
-    pendingIntent = 'cheat';
-    openAuth();
-    return;
-  }
-  if (cheatEnabled) {
-    send({ type: 'cheat', enabled: false });
-    return;
-  }
-  openCheat();
-});
+for (const [id, kind] of [
+  ['cheat-button', 'normal'],
+  ['admin-cheat-button', 'admin']
+])
+  $(id).addEventListener('click', () => {
+    if (active || queued || room) {
+      toast('対戦・待機を終了してからチートモードを切り替えてください。');
+      return;
+    }
+    if (!user) {
+      pendingIntent = kind === 'admin' ? 'admin-cheat' : 'cheat';
+      openAuth();
+      return;
+    }
+    if (kind === 'admin' ? adminCheatEnabled : cheatEnabled) {
+      send({ type: kind === 'admin' ? 'admin_cheat' : 'cheat', enabled: false });
+      return;
+    }
+    openCheat(kind);
+  });
 $('cheat-close').addEventListener('click', () => $('cheat-dialog').close());
 $('cheat-form').addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -227,7 +266,7 @@ $('cheat-form').addEventListener('submit', async (event) => {
   $('cheat-error').textContent = '';
   try {
     await connect();
-    send({ type: 'cheat', password });
+    send({ type: cheatKind === 'admin' ? 'admin_cheat' : 'cheat', enabled: true, password });
   } catch (error) {
     $('cheat-error').textContent = error.message;
   } finally {
@@ -248,36 +287,67 @@ $('queue-dialog').addEventListener('cancel', (event) => {
   send({ type: 'cancel' });
 });
 function handleMessage(message) {
-  if (message.type === 'queued') {
+  if (message.type === 'availability') {
+    updateAvailability(message.availability);
+  } else if (message.type === 'admin') {
+    adminAuthorized = Boolean(message.authorized);
+    updateAdmin(message.availability);
+    $('admin-error').textContent = message.message || '';
+    if (message.saved) toast('ゲーム禁止時間帯を保存しました。');
+    if (message.stopped !== undefined)
+      toast(
+        message.stopped
+          ? 'ゲーム全体を停止しました。'
+          : '即時停止を解除しました。時間帯の制限は引き続き適用されます。'
+      );
+  } else if (message.type === 'tournament') {
+    room = message.room;
+    $('tournament-dialog').close();
+    renderRoom();
+    if (!active && !$('result-dialog').open) showView('tournament');
+  } else if (message.type === 'tournament_left') {
+    room = null;
+    $('result-room').hidden = true;
+    if (!active) showView('home');
+  } else if (message.type === 'queued') {
     queued = true;
     if (!$('queue-dialog').open) $('queue-dialog').showModal();
   } else if (message.type === 'canceled') {
     queued = false;
     $('queue-dialog').close();
-  } else if (message.type === 'cheat') {
-    cheatEnabled = message.enabled;
+  } else if (message.type === 'cheat' || message.type === 'admin_cheat') {
+    const admin = message.type === 'admin_cheat';
+    if (admin) adminCheatEnabled = message.enabled;
+    else cheatEnabled = message.enabled;
     updateCheatButton();
-    if (message.enabled) {
+    if (message.message) {
+      $('cheat-error').textContent = message.message;
+      toast(message.message);
+    } else if (message.enabled) {
       $('cheat-dialog').close();
       $('cheat-form').reset();
-      toast('チートモードをONにしました。');
-    } else if (message.message) $('cheat-error').textContent = message.message;
-    else toast('チートモードをOFFにしました。');
+      toast((admin ? 'adminチート' : 'チートモード') + 'をONにしました。');
+    } else toast((admin ? 'adminチート' : 'チートモード') + 'をOFFにしました。');
   } else if (message.type === 'start') {
     active = message;
     cheatEnabled = Boolean(message.cheatEnabled);
+    adminCheatEnabled = Boolean(message.adminCheatEnabled);
     updateCheatButton();
     resetFeedback();
     queued = false;
     $('queue-dialog').close();
     $('result-dialog').close();
     $('confirm-dialog').close();
+    $('tournament-dialog').close();
+    $('admin-dialog').close();
     showView('game');
     $('self-name').textContent = message.players[message.seat].nickname;
     $('rival-name').textContent = message.players[1 - message.seat].nickname;
-    $('battle-title').textContent = message.difficulty
-      ? 'CPU CHALLENGE / ' + message.difficulty.toUpperCase()
-      : 'ONLINE COLOR BATTLE';
+    $('battle-title').textContent = message.tournament
+      ? 'TOURNAMENT / ' + message.tournament.code
+      : message.difficulty
+        ? 'CPU CHALLENGE / ' + message.difficulty.toUpperCase()
+        : 'ONLINE COLOR BATTLE';
     clearInterval(countdownTimer);
     const startsAt = performance.now() + message.startsAt - message.serverNow;
     const countdown = () => {
@@ -301,6 +371,7 @@ function handleMessage(message) {
     clearInterval(countdownTimer);
     $('countdown').textContent = '';
     $('confirm-dialog').close();
+    $('admin-dialog').close();
     const draw = message.winner === null;
     $('result-title').textContent = draw
       ? 'DRAW'
@@ -312,6 +383,8 @@ function handleMessage(message) {
       forfeit: '途中終了',
       topout: 'ブロックが上まで到達',
       time: '5分経過',
+      restricted: 'ゲーム禁止時間帯のため終了',
+      admin_stop: '管理者によるゲーム停止',
       server_shutdown: 'サーバー再起動'
     };
     $('result-detail').textContent =
@@ -319,14 +392,198 @@ function handleMessage(message) {
         ? `${reasons.time} / 盤面ブロック あなた ${message.blockCounts[seat]}個 : 相手 ${message.blockCounts[1 - seat]}個（少ない方が勝利）`
         : `${reasons[message.reason]} / あなた ${message.scores[seat].toLocaleString()} : 相手 ${message.scores[1 - seat].toLocaleString()}`;
     $('save-status').textContent = '対戦ログを保存しています…';
+    $('result-room').hidden = !room;
     $('result-dialog').showModal();
   } else if (message.type === 'saved' && message.id === resultId) {
     $('save-status').textContent = '対戦ログを保存しました。';
     if (!$('history-view').hidden) loadHistory();
   } else if (message.type === 'error') {
     toast(message.message);
+    if ($('admin-dialog').open) $('admin-error').textContent = message.message;
+    if ($('tournament-dialog').open) $('room-error').textContent = message.message;
     if ($('result-dialog').open) $('save-status').textContent = message.message;
   }
+}
+function updateAvailability(availability) {
+  if (!availability) return;
+  playAvailability = availability;
+  const notice = $('availability-notice');
+  notice.hidden = !availability.blocked;
+  notice.textContent = availability.paused
+    ? '管理者がゲーム全体を停止しています。再開をお待ちください。'
+    : `現在はゲーム禁止時間帯です（毎日 ${availability.start}〜${availability.end}・日本時間）。`;
+  if (adminAuthorized) updateAdmin();
+  for (const id of ['cpu-button', 'online-button', 'tournament-button'])
+    $(id).disabled = availability.blocked;
+}
+async function refreshAvailability() {
+  if (document.hidden || socket?.readyState === WebSocket.OPEN) return;
+  try {
+    updateAvailability(await api('availability'));
+  } catch {
+    /* next poll retries */
+  }
+}
+setInterval(refreshAvailability, 15000);
+document.addEventListener('visibilitychange', refreshAvailability);
+function updateAdmin(availability) {
+  $('admin-button').hidden = !adminAuthorized;
+  $('admin-name-notice').hidden = adminAuthorized;
+  $('admin-controls').hidden = !adminAuthorized;
+  if (!adminAuthorized) $('admin-dialog').close();
+  const status = availability || playAvailability;
+  $('admin-play-status').textContent = status?.paused
+    ? '状態：管理者が停止中'
+    : status?.blocked
+      ? '状態：ゲーム禁止時間帯'
+      : '状態：プレイ可能';
+  $('admin-stop-button').disabled = Boolean(status?.paused);
+  $('admin-resume-button').disabled = !status?.paused;
+  if (availability) {
+    const form = $('admin-schedule-form');
+    form.elements.enabled.checked = availability.enabled;
+    form.elements.start.value = availability.start;
+    form.elements.end.value = availability.end;
+  }
+}
+function requireRegistration(intent) {
+  if (user) return false;
+  pendingIntent = intent;
+  openAuth();
+  return true;
+}
+async function openAdmin() {
+  if (!adminAuthorized) return;
+  $('admin-error').textContent = '';
+  $('admin-dialog').showModal();
+  try {
+    await connect();
+    updateAdmin(playAvailability);
+  } catch (error) {
+    $('admin-error').textContent = error.message;
+  }
+}
+$('admin-button').addEventListener('click', openAdmin);
+$('admin-close').addEventListener('click', () => $('admin-dialog').close());
+for (const [id, paused] of [
+  ['admin-stop-button', true],
+  ['admin-resume-button', false]
+])
+  $(id).addEventListener('click', async () => {
+    try {
+      await connect();
+      send({ type: 'admin_pause', paused });
+    } catch (error) {
+      $('admin-error').textContent = error.message;
+    }
+  });
+$('admin-schedule-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  $('admin-error').textContent = '';
+  const schedule = {
+    enabled: form.elements.enabled.checked,
+    start: form.elements.start.value,
+    end: form.elements.end.value
+  };
+  try {
+    await connect();
+    send({ type: 'admin_schedule', schedule });
+  } catch (error) {
+    $('admin-error').textContent = error.message;
+  }
+});
+function openTournament() {
+  if (active || queued) return;
+  if (room) {
+    showView('tournament');
+    return;
+  }
+  if (requireRegistration('tournament')) return;
+  $('room-error').textContent = '';
+  $('tournament-dialog').showModal();
+}
+$('tournament-button').addEventListener('click', openTournament);
+$('tournament-close').addEventListener('click', () => $('tournament-dialog').close());
+for (const operation of ['create', 'join']) {
+  $(`room-${operation}-form`).addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data =
+      operation === 'create'
+        ? { capacity: Number(form.elements.capacity.value) }
+        : { code: form.elements.code.value.trim().toUpperCase() };
+    try {
+      await connect();
+      send({ type: 'tournament', operation, ...data });
+    } catch (error) {
+      $('room-error').textContent = error.message;
+    }
+  });
+}
+for (const operation of ['leave', 'start', 'ready'])
+  $(`room-${operation}`).addEventListener('click', () => send({ type: 'tournament', operation }));
+function renderRoom() {
+  if (!room) return;
+  $('room-code').textContent = room.code;
+  $('room-status').textContent =
+    room.status === 'lobby'
+      ? `${room.members.length} / ${room.capacity}人が参加中`
+      : room.status === 'finished'
+        ? `優勝：${room.champion.nickname}`
+        : room.status === 'canceled'
+          ? '大会は中止されました。部屋を退出してください。'
+          : '大会進行中 / 次の対戦者は準備完了を押してください。引き分けは再試合です。';
+  $('room-members').replaceChildren(
+    ...room.members.map((member) => {
+      const item = document.createElement('li');
+      item.textContent =
+        member.nickname +
+        (member.username === room.host ? '（主催者）' : '') +
+        (!member.connected ? '（退出）' : '');
+      return item;
+    })
+  );
+  $('room-start').hidden = room.status !== 'lobby' || room.host !== user.username;
+  $('room-start').disabled = room.members.length !== room.capacity;
+  $('room-ready').hidden = !room.canReady;
+  $('room-ready').disabled = room.ready.includes(user.username);
+  $('room-ready').textContent = room.ready.includes(user.username)
+    ? '相手の準備完了を待っています…'
+    : '次の試合の準備完了 →';
+  $('room-bracket').replaceChildren(
+    ...room.rounds.map((round, index) => {
+      const section = document.createElement('section');
+      section.className = 'bracket-round';
+      const heading = document.createElement('h2');
+      heading.textContent = round.length === 1 ? '決勝' : `${index + 1}回戦`;
+      section.append(heading);
+      for (const entry of round) {
+        const card = document.createElement('article');
+        card.className = 'bracket-match';
+        for (const player of entry.players) {
+          const line = document.createElement('p');
+          line.textContent = player ? player.nickname : 'シード枠';
+          if (player && entry.winner?.username === player.username) line.className = 'winner';
+          card.append(line);
+        }
+        const status = document.createElement('small');
+        status.textContent =
+          entry.reason === 'bye'
+            ? 'シードで進出'
+            : entry.reason === 'draw'
+              ? '引き分け・再試合の準備待ち'
+              : entry.status === 'done'
+                ? '試合終了'
+                : entry.status === 'playing'
+                  ? '対戦中'
+                  : '準備完了待ち';
+        card.append(status);
+        section.append(card);
+      }
+      return section;
+    })
+  );
 }
 function drawCell(ctx, x, y, size, value, ghost = false) {
   ctx.fillStyle = colors[value];
@@ -375,8 +632,10 @@ const boardObserver = new ResizeObserver(fitBoards);
 document.querySelectorAll('.board-and-side').forEach((area) => boardObserver.observe(area));
 window.addEventListener('resize', fitBoards);
 const feedbackStates = new Map();
+const clearEffects = new Map();
 function resetFeedback() {
   playerStates.clear();
+  clearEffects.clear();
   for (const feedback of feedbackStates.values()) clearTimeout(feedback.timer);
   feedbackStates.clear();
   for (const prefix of ['self', 'rival']) {
@@ -413,6 +672,8 @@ function showCancellation(prefix, cancellation) {
   feedbackStates.set(prefix, { id: cancellation.id, timer });
 }
 function renderPlayer(prefix, state) {
+  if (state.clearEffect && clearEffects.get(prefix)?.id !== state.clearEffect.id)
+    clearEffects.set(prefix, { ...state.clearEffect, startedAt: performance.now() });
   playerStates.set(prefix, { state, receivedAt: performance.now() });
   paintBoard(prefix, state);
   updateStats(prefix, state);
@@ -457,6 +718,27 @@ function paintBoard(prefix, state, extraMs = 0) {
     const y = -1 + (block.targetY + 1) * t * t;
     drawCell(ctx, block.x * size, y * size, size, 8);
   }
+  const effect = clearEffects.get(prefix);
+  const duration = matchMedia('(prefers-reduced-motion: reduce)').matches ? 60 : CLEAR_FEEDBACK_MS;
+  const progress = effect ? (performance.now() - effect.startedAt) / duration : 1;
+  if (progress < 1) {
+    ctx.save();
+    const fade = 1 - progress;
+    for (const [x, y, color] of effect.cells) {
+      const inset = 3 + progress * size * 0.16;
+      ctx.globalAlpha = fade * 0.78;
+      ctx.fillStyle = colors[color];
+      ctx.fillRect(x * size + inset, y * size + inset, size - inset * 2, size - inset * 2);
+      ctx.globalAlpha = fade * 0.9;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2.5;
+      ctx.strokeRect(x * size + inset, y * size + inset, size - inset * 2, size - inset * 2);
+      ctx.globalAlpha = fade * 0.4;
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(x * size + inset, y * size + inset, size - inset * 2, (size - inset * 2) * 0.3);
+    }
+    ctx.restore();
+  }
 }
 function updateStats(prefix, state) {
   const nextCanvas = $(prefix + '-next');
@@ -491,13 +773,15 @@ function updateStats(prefix, state) {
     ? `相殺！ お邪魔 ${state.canceled} 個を打ち消した`
     : state.garbageActive
       ? 'お邪魔が1個ずつ落下中…'
-      : state.combo >= 1
-        ? `${state.combo} COMBO · ${state.lastClear} BLOCKS CLEARED`
-        : state.lastClear
-          ? `${state.lastClear} BLOCKS CLEARED!`
-          : state.pending
-            ? `お邪魔 ${state.pending} 個が接近中`
-            : '同じ色を4つつなげよう';
+      : state.lastChains >= 2
+        ? `${state.lastChains} CHAIN · ${state.lastClear} BLOCKS CLEARED`
+        : state.combo >= 1
+          ? `${state.combo} COMBO · ${state.lastClear} BLOCKS CLEARED`
+          : state.lastClear
+            ? `${state.lastClear} BLOCKS CLEARED!`
+            : state.pending
+              ? `お邪魔 ${state.pending} 個が接近中`
+              : '同じ色を4つつなげよう';
   if (prefix === 'self') {
     $('shield-button').disabled = !state.shield;
     $('shield-button').textContent = state.shieldMs
@@ -510,7 +794,12 @@ function updateStats(prefix, state) {
 function animateBoards(now) {
   if (active) {
     for (const [prefix, { state, receivedAt }] of playerStates) {
-      if (state.fallingGarbage) paintBoard(prefix, state, now - receivedAt);
+      const effect = clearEffects.get(prefix);
+      // Repaint once more after the fade expires to remove its last frame.
+      if (state.fallingGarbage || (effect && !effect.painted)) {
+        paintBoard(prefix, state, now - receivedAt);
+        if (effect && now - effect.startedAt >= CLEAR_FEEDBACK_MS) effect.painted = true;
+      }
     }
   }
   requestAnimationFrame(animateBoards);
@@ -581,13 +870,17 @@ $('confirm-forfeit').addEventListener('click', () => {
 });
 $('result-home').addEventListener('click', () => {
   $('result-dialog').close();
-  showView('home');
+  showView(room ? 'tournament' : 'home');
 });
 $('result-history').addEventListener('click', () => {
   $('result-dialog').close();
   loadHistory();
 });
-$('result-dialog').addEventListener('cancel', () => showView('home'));
+$('result-dialog').addEventListener('cancel', () => showView(room ? 'tournament' : 'home'));
+$('result-room').addEventListener('click', () => {
+  $('result-dialog').close();
+  showView(room ? 'tournament' : 'home');
+});
 $('history-nav').addEventListener('click', () => navigate('history'));
 async function loadHistory() {
   if (!user) {
@@ -622,7 +915,11 @@ async function loadHistory() {
       date.textContent =
         new Date(match.startedAt).toLocaleString('ja-JP') +
         ' / ' +
-        (match.difficulty ? 'CPU ' + match.difficulty : 'オンライン');
+        (match.tournament
+          ? '大会 ' + match.tournament.code
+          : match.difficulty
+            ? 'CPU ' + match.difficulty
+            : 'オンライン');
       details.append(date);
       const score = document.createElement('b');
       score.textContent =
@@ -722,13 +1019,15 @@ $('export-button').addEventListener('click', () => {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 });
 window.addEventListener('beforeunload', (event) => {
-  if (active) {
+  if (active || room) {
     event.preventDefault();
     event.returnValue = '';
   }
 });
 try {
-  user = (await api('me')).user;
+  const account = await api('me');
+  user = account.user;
+  updateAvailability(account.availability);
   updateAccount();
 } catch {
   toast('サーバーに接続できません。ページを再読み込みしてください。');
